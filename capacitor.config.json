@@ -1,0 +1,8 @@
+{
+  "appId": "com.buildermeow.app",
+  "appName": "Blender Meow",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  }
+}
