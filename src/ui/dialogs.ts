@@ -9,6 +9,8 @@ import {
 } from '../core/exporter';
 import { exportBuilderPsd, exportFourViewLayersPsd, importPsdAsRasterLayers } from '../core/psd';
 import { THEME_PRESETS, type ThemeId } from '../core/theme';
+import { PIXEL_MEOW_ONLINE_URL } from '../core/about';
+import { tr } from '../core/i18n';
 import { cellsToMeters, metersToCells } from '../core/isoMath';
 import { resolveAssetUrl } from '../core/theotownAssets';
 import { isNative, pickFile, pickFolder, saveFile, sendToPixelMeowApp } from '../platform';
@@ -381,12 +383,27 @@ export function openSendToPixelMeowDialog(app: App) {
     type: 'text',
     class: 'text-input',
     value: app.settings.pixelMeowWebUrl,
-    placeholder: 'http://localhost:5173',
+    placeholder: PIXEL_MEOW_ONLINE_URL,
     onchange: () => {
-      app.settings.pixelMeowWebUrl = urlIn.value.trim() || 'http://localhost:5173';
+      app.settings.pixelMeowWebUrl = urlIn.value.trim() || PIXEL_MEOW_ONLINE_URL;
       app.saveSettings();
     },
   }) as HTMLInputElement;
+
+  const useOnlineBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn small',
+      onclick: () => {
+        urlIn.value = PIXEL_MEOW_ONLINE_URL;
+        app.settings.pixelMeowWebUrl = PIXEL_MEOW_ONLINE_URL;
+        app.saveSettings();
+        toast('已切换为 Pixel Meow 在线版地址');
+      },
+    },
+    '🌐 使用在线版',
+  );
 
   const body = h(
     'div',
@@ -457,7 +474,7 @@ export function openSendToPixelMeowDialog(app: App) {
       includeInterBlockShadow = v;
     }),
     !isNative() && !isMcpBridgeActive()
-      ? h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 地址'), urlIn)
+      ? h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 地址'), urlIn, useOnlineBtn)
       : null,
   );
 
@@ -565,11 +582,27 @@ export function openSettingsDialog(app: App) {
     type: 'text',
     class: 'text-input',
     value: app.settings.pixelMeowWebUrl,
+    placeholder: PIXEL_MEOW_ONLINE_URL,
     onchange: () => {
-      app.settings.pixelMeowWebUrl = urlIn.value.trim() || 'http://localhost:5173';
+      app.settings.pixelMeowWebUrl = urlIn.value.trim() || PIXEL_MEOW_ONLINE_URL;
       app.saveSettings();
     },
   }) as HTMLInputElement;
+
+  const useOnlineBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn small',
+      onclick: () => {
+        urlIn.value = PIXEL_MEOW_ONLINE_URL;
+        app.settings.pixelMeowWebUrl = PIXEL_MEOW_ONLINE_URL;
+        app.saveSettings();
+        toast('已切换为 Pixel Meow 在线版地址');
+      },
+    },
+    '🌐 使用在线版',
+  );
 
   let cleanupDocSync: (() => void) | null = null;
   const body = h(
@@ -624,7 +657,7 @@ export function openSettingsDialog(app: App) {
         (v) => {
           pendingLiveSteps = v;
           shadePresetSel.value = stepsToPresetId(v);
-          shadeHint.textContent = formatShadeModeHint(v);
+          shadeHint.textContent = tr(formatShadeModeHint(v));
           shadeSlider.row.style.opacity = '1';
           if (!liveRaf) {
             liveRaf = requestAnimationFrame(flushLiveSteps);
@@ -643,7 +676,7 @@ export function openSettingsDialog(app: App) {
             pendingLiveSteps = null;
             app.setShadeSteps(v, { live: false, persistDefault: true });
             shadePresetSel.value = stepsToPresetId(v);
-            shadeHint.textContent = formatShadeModeHint(v);
+            shadeHint.textContent = tr(formatShadeModeHint(v));
             shadeSlider.row.style.opacity = '1';
           },
         },
@@ -665,19 +698,19 @@ export function openSettingsDialog(app: App) {
             app.setShadeSteps(0, { pushHistory: '调整光影精细度', persistDefault: true });
             shadeSlider.set(64);
             shadeSlider.row.style.opacity = '0.62';
-            shadeHint.textContent = formatShadeModeHint(0);
+            shadeHint.textContent = tr(formatShadeModeHint(0));
           } else if (v === 'custom') {
             const next = app.doc.shadeSteps > 0 ? app.doc.shadeSteps : 12;
             app.setShadeSteps(next, { pushHistory: '调整光影精细度', persistDefault: true });
             shadeSlider.set(next);
             shadeSlider.row.style.opacity = '1';
-            shadeHint.textContent = formatShadeModeHint(next);
+            shadeHint.textContent = tr(formatShadeModeHint(next));
           } else {
             const next = Number(v);
             app.setShadeSteps(next, { pushHistory: '调整光影精细度', persistDefault: true });
             shadeSlider.set(next);
             shadeSlider.row.style.opacity = '1';
-            shadeHint.textContent = formatShadeModeHint(next);
+            shadeHint.textContent = tr(formatShadeModeHint(next));
           }
         },
       );
@@ -699,7 +732,7 @@ export function openSettingsDialog(app: App) {
         shadePresetSel.value = stepsToPresetId(curSteps);
         shadeSlider.set(curSteps > 0 ? curSteps : 64);
         shadeSlider.row.style.opacity = curSteps <= 0 ? '0.62' : '1';
-        shadeHint.textContent = formatShadeModeHint(curSteps);
+        shadeHint.textContent = tr(formatShadeModeHint(curSteps));
         if (interBlockCb) interBlockCb.checked = Boolean(app.doc.groundShadow.interBlockEnabled);
       });
       cleanupDocSync = () => {
@@ -793,9 +826,9 @@ export function openSettingsDialog(app: App) {
               },
               `📁 选择电脑保存目录（默认工作区: ${getMcpDefaultSaveDir()}）`,
             ),
-            h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 网页'), urlIn),
+            h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 网页'), urlIn, useOnlineBtn),
           )
-        : h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 网页'), urlIn),
+        : h('div', { class: 'range-row' }, h('span', { class: 'rl' }, 'Pixel Meow 网页'), urlIn, useOnlineBtn),
   );
 
   openSheet('⚙️ Blender Meow 设置', body, {

@@ -6,6 +6,7 @@
 
 import type { App } from '../app';
 import { clamp, parseHex, toHex, toHex8, type RGBA } from '../core/color';
+import { tr } from '../core/i18n';
 import { DEFAULT_GROUND_SHADOW_COLOR, DEFAULT_GROUND_SHADOW_HEX } from '../core/groundShadow';
 import {
   MAX_SHADE_CONTRAST,
@@ -588,7 +589,7 @@ export class MaterialPanel {
     const shape = isShapeLayer ? active!.shape! : this.app.createPreset;
     const activeId = isShapeLayer ? active!.id : undefined;
 
-    this.titleEl.textContent = isShapeLayer ? `材质与纹理 · ${active!.name}` : '材质与纹理 · 新建预设';
+    this.titleEl.textContent = tr(isShapeLayer ? `材质与纹理 · ${active!.name}` : '材质与纹理 · 新建预设');
 
     const mutHooks = {
       beforeMutate: (label: string) => {

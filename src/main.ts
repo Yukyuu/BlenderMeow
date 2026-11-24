@@ -4,6 +4,15 @@ import { App as CapApp } from '@capacitor/app';
 import { App, type RulerMode, type ToolId } from './app';
 import { isNative } from './platform';
 import { clamp } from './core/color';
+import { PIXEL_MEOW_ONLINE_URL } from './core/about';
+import {
+  SUPPORTED_LOCALES,
+  detectSystemLocale,
+  getLanguageSetting,
+  isEn,
+  onLocaleChange,
+  tr,
+} from './core/i18n';
 import { viewBoxToWorld, worldBoxToView, type GridSnapStep } from './core/isoMath';
 import { SHAPE_LABELS, type ShapeKind } from './core/isoRenderer';
 import { isEditableElement } from './shortcuts/keyCodec';
@@ -11,7 +20,12 @@ import { formatActionHint, openShortcutsDialog, shortcutManager } from './shortc
 import { resolveAssetUrl } from './core/theotownAssets';
 import { RulerTool } from './core/rulerTool';
 import { CreateShapeTool, HandTool, PlotFrameTool, SelectGizmoTool, type Tool } from './core/tools';
-import { checkVersionAndShowChangelog } from './ui/changelogDialog';
+import {
+  APP_VERSION,
+  buildAboutLicenseCard,
+  checkVersionAndShowChangelog,
+  openChangelogDialog,
+} from './ui/changelogDialog';
 import { initMcpBridge, shouldEnableMcpBridge } from './mcpBridge';
 import {
   openExportDialog,
@@ -20,7 +34,7 @@ import {
   openSendToPixelMeowDialog,
   openSettingsDialog,
 } from './ui/dialogs';
-import { h, icon, openSheets, select, toast, toggle } from './ui/dom';
+import { h, icon, openSheet, openSheets, retranslateDom, select, toast, toggle } from './ui/dom';
 import { InspectorPanel, openParamCreateDialog } from './ui/inspectorPanel';
 import { LayerPanel } from './ui/layerPanel';
 import { MaterialPanel } from './ui/materialPanel';
@@ -143,14 +157,174 @@ rightDrawer.append(
 syncDrawerTabs();
 
 // ---------------- Topbar ----------------
-const docTitleEl = h('span', { class: 'doc-title' }, app.docName);
+function openBrandMenu() {
+  let close = () => {};
+  const langSubEl = h('span', { class: 'menu-lang-sub', 'data-no-i18n': '1' });
+  const langBtns = new Map<string, HTMLButtonElement>();
+
+  const updateLangCard = () => {
+    const curSetting = getLanguageSetting();
+    const sysLocale = detectSystemLocale();
+    const en = isEn();
+    const sysName = sysLocale === 'zh' ? (en ? 'Chinese' : '简体中文') : 'English';
+    langSubEl.textContent =
+      curSetting === 'auto'
+        ? en
+          ? `Auto · System: ${sysName}`
+          : `自动 · 系统识别：${sysName}`
+        : en
+          ? `System: ${sysName}`
+          : `系统识别：${sysName}`;
+    for (const opt of SUPPORTED_LOCALES) {
+      const btn = langBtns.get(opt.id);
+      if (!btn) continue;
+      btn.classList.toggle('active', curSetting === opt.id);
+      if (opt.id === 'auto') {
+        btn.textContent = en ? opt.enLabel : opt.zhLabel;
+      }
+    }
+  };
+
+  const langSeg = h(
+    'div',
+    { class: 'menu-lang-seg' },
+    ...SUPPORTED_LOCALES.map((opt) => {
+      const btn = h(
+        'button',
+        {
+          type: 'button',
+          class: 'menu-lang-btn',
+          'data-no-i18n': '1',
+          onclick: () => {
+            app.setLanguage(opt.id);
+            updateLangCard();
+            if (opt.id === 'auto') {
+              toast(isEn() ? '🌐 Language: Follow System (English)' : '🌐 语言：跟随系统（简体中文）');
+            } else if (opt.id === 'en') {
+              toast('🌐 Language switched to English');
+            } else {
+              toast('🌐 语言已切换为简体中文');
+            }
+          },
+        },
+        opt.id === 'auto' ? (isEn() ? opt.enLabel : opt.zhLabel) : opt.nativeLabel,
+      ) as HTMLButtonElement;
+      langBtns.set(opt.id, btn);
+      return btn;
+    }),
+  );
+  updateLangCard();
+
+  const langCard = h(
+    'div',
+    { class: 'menu-lang-card' },
+    h(
+      'div',
+      { class: 'menu-lang-head' },
+      h('span', { 'data-no-i18n': '1' }, '🌐 语言 / Language'),
+      langSubEl,
+    ),
+    langSeg,
+  );
+
+  const body = h(
+    'div',
+    { style: 'display:flex;flex-direction:column;gap:10px' },
+    h(
+      'div',
+      { class: 'brand-banner' },
+      h('img', { src: resolveAssetUrl('./icon.png'), alt: 'Blender Meow', class: 'brand-logo' }),
+      h(
+        'div',
+        {},
+        h('div', { style: 'font-weight:700;font-size:15px', 'data-no-i18n': '1' }, `Blender Meow · v${APP_VERSION}`),
+        h('div', { class: 'hint' }, '32×16 菱形网格 · TheoTown 双比例尺 · 无缝导入 Pixel Meow'),
+      ),
+    ),
+    langCard,
+    h('div', { class: 'menu-sec' }, '快捷入口'),
+    h(
+      'div',
+      { class: 'brand-menu-grid' },
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn',
+          onclick: () => {
+            close();
+            void openProjectHome(app, () => view.fit());
+          },
+        },
+        '🏠 项目主页',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn',
+          onclick: () => {
+            close();
+            openChangelogDialog('manual');
+          },
+        },
+        '📜 更新日志',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn',
+          onclick: () => {
+            close();
+            openSettingsDialog(app);
+          },
+        },
+        '⚙️ 设置与主题',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn',
+          onclick: () => {
+            close();
+            openShortcutsDialog();
+          },
+        },
+        '⌨️ 键盘快捷键',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn full',
+          onclick: () => {
+            window.open(PIXEL_MEOW_ONLINE_URL, '_blank', 'noopener,noreferrer');
+          },
+        },
+        '🎨 打开 Pixel Meow 在线版',
+      ),
+    ),
+    buildAboutLicenseCard(),
+  );
+
+  const unsubLang = onLocaleChange(updateLangCard);
+  close = openSheet('Blender Meow 菜单', body, {
+    wide: true,
+    onClose: () => unsubLang(),
+    actions: [h('button', { class: 'btn primary', onclick: () => close() }, '完成')],
+  });
+}
+
+const docTitleEl = h('span', { class: 'doc-title', 'data-no-i18n': '1' }, app.docName);
 const plotPillEl = h('span', { class: 'canvas-size-pill' });
 const brandBtn = h(
   'button',
   {
     class: 'brand-btn',
-    title: 'Blender Meow 项目主页',
-    onclick: () => void openProjectHome(app, () => view.fit()),
+    title: 'Blender Meow 菜单、语言与关于',
+    onclick: () => openBrandMenu(),
   },
   h('img', { src: resolveAssetUrl('./icon.png'), alt: 'Blender Meow', class: 'brand-icon' }),
   h('div', { class: 'title-box' }, h('div', { class: 'title-row' }, docTitleEl, plotPillEl), cursorInfo),
@@ -265,9 +439,11 @@ function syncTexLibBtn() {
   const open = docked && texLibDock.isOpen();
   texLibBtn.classList.toggle('primary', open);
   texLibBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
-  texLibBtn.title = docked
-    ? '打开/关闭侧边停靠纹理素材库（可与材质与纹理、图层管理并排显示）'
-    : '打开全屏纹理素材库（可在设置中切换为侧边停靠模式）';
+  texLibBtn.title = tr(
+    docked
+      ? '打开/关闭侧边停靠纹理素材库（可与材质与纹理、图层管理并排显示）'
+      : '打开全屏纹理素材库（可在设置中切换为侧边停靠模式）',
+  );
 }
 
 const exportBtn = h('button', {
@@ -669,15 +845,15 @@ view.onThreeFingerTap = () => {
 };
 view.onCursor = (p) => {
   if (!p) {
-    cursorInfo.textContent = `视角 ${app.doc.viewRotation * 90}° · 32×16=9.6m · 竖3px=1.6m`;
+    cursorInfo.textContent = tr(`视角 ${app.doc.viewRotation * 90}° · 32×16=9.6m · 竖3px=1.6m`);
     return;
   }
-  cursorInfo.textContent = `像素 (${p.x}, ${p.y}) · 网格 (U:${p.u.toFixed(2)}, V:${p.v.toFixed(2)}) · 视角 ${app.doc.viewRotation * 90}°`;
+  cursorInfo.textContent = tr(`像素 (${p.x}, ${p.y}) · 网格 (U:${p.u.toFixed(2)}, V:${p.v.toFixed(2)}) · 视角 ${app.doc.viewRotation * 90}°`);
 };
 
 function syncAllUi() {
   docTitleEl.textContent = app.docName;
-  plotPillEl.textContent = `${app.doc.width}×${app.doc.height} · ${app.doc.plotU}×${app.doc.plotV}格`;
+  plotPillEl.textContent = tr(`${app.doc.width}×${app.doc.height} · ${app.doc.plotU}×${app.doc.plotV}格`);
   rotBadge.textContent = `${app.doc.viewRotation * 90}°`;
   undoBtn.disabled = !app.history.canUndo;
   redoBtn.disabled = !app.history.canRedo;
@@ -726,16 +902,16 @@ app.on((what) => {
 
 // Dynamic shortcut hints & Escape / modular shortcut system
 function syncShortcutTooltips() {
-  undoBtn.title = `撤销${formatActionHint('history.undo')}`;
-  redoBtn.title = `重做${formatActionHint('history.redo')}`;
-  rotLeftBtn.title = `逆时针旋转 90° 查看另一视角${formatActionHint('view.rotateLeft')}`;
-  rotRightBtn.title = `顺时针旋转 90° 查看另一视角${formatActionHint('view.rotateRight')}`;
-  gridToggleBtn.title = `显隐 32×16 菱形网格${formatActionHint('view.toggleGrid')}`;
-  snapToggleBtn.title = `开启/关闭 32×16 网格吸附${formatActionHint('view.toggleSnap')}`;
-  sortDepthBtn.title = `按当前视角前后遮挡深度自动排列图层${formatActionHint('view.sortDepth')}`;
-  fitBtn.title = `适应画布视野${formatActionHint('view.fit')}`;
-  exportBtn.title = `保存项目 (.bmeow) 或导出 PSD / PNG${formatActionHint('file.export')}`;
-  shortcutsBtn.title = `键盘快捷键与预设方案${formatActionHint('ui.shortcuts')}`;
+  undoBtn.title = `${tr('撤销')}${formatActionHint('history.undo')}`;
+  redoBtn.title = `${tr('重做')}${formatActionHint('history.redo')}`;
+  rotLeftBtn.title = `${tr('逆时针旋转 90° 查看另一视角')}${formatActionHint('view.rotateLeft')}`;
+  rotRightBtn.title = `${tr('顺时针旋转 90° 查看另一视角')}${formatActionHint('view.rotateRight')}`;
+  gridToggleBtn.title = `${tr('显隐 32×16 菱形网格')}${formatActionHint('view.toggleGrid')}`;
+  snapToggleBtn.title = `${tr('开启/关闭 32×16 网格吸附')}${formatActionHint('view.toggleSnap')}`;
+  sortDepthBtn.title = `${tr('按当前视角前后遮挡深度自动排列图层')}${formatActionHint('view.sortDepth')}`;
+  fitBtn.title = `${tr('适应画布视野')}${formatActionHint('view.fit')}`;
+  exportBtn.title = `${tr('保存项目 (.bmeow) 或导出 PSD / PNG')}${formatActionHint('file.export')}`;
+  shortcutsBtn.title = `${tr('键盘快捷键与预设方案')}${formatActionHint('ui.shortcuts')}`;
   const toolActionIds: Record<ToolId, string> = {
     select: 'tool.select',
     create: 'tool.create',
@@ -745,11 +921,17 @@ function syncShortcutTooltips() {
   };
   for (const td of toolDefs) {
     const btn = toolBtnMap.get(td.id);
-    if (btn) btn.title = `${td.label}${formatActionHint(toolActionIds[td.id])}`;
+    if (btn) btn.title = `${tr(td.label)}${formatActionHint(toolActionIds[td.id])}`;
   }
 }
 syncShortcutTooltips();
 shortcutManager.onChange(syncShortcutTooltips);
+onLocaleChange(() => {
+  retranslateDom(document.body);
+  syncShortcutTooltips();
+  syncAllUi();
+  view.onCursor?.(null);
+});
 
 window.addEventListener('keydown', (e) => {
   if (shortcutManager.isRecording || isEditableElement(e.target)) return;

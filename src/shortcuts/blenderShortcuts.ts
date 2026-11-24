@@ -1,5 +1,5 @@
 // Blender Meow shortcut registry, built-in presets (Standard / Arrows-Pan / Tablet-Left), singleton & dialog helper
-import { openSheet, openSheets, toast } from '../ui/dom';
+import { h, openSheet, openSheets, toast } from '../ui/dom';
 import { createShortcutEditorUI } from './shortcutEditorUI';
 import { ShortcutManager } from './shortcutManager';
 import type { ShortcutActionDef, ShortcutCategoryDef, ShortcutPreset } from './types';
@@ -377,10 +377,5 @@ export function openShortcutsDialog(): void {
 }
 
 function hBtn(label: string, className: string, onClick: () => void): HTMLButtonElement {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = className;
-  btn.textContent = label;
-  btn.addEventListener('click', onClick);
-  return btn;
+  return h('button', { type: 'button', class: className, onclick: onClick }, label) as HTMLButtonElement;
 }

@@ -4,6 +4,7 @@
 
 import type { App } from '../app';
 import { clamp } from '../core/color';
+import { tr } from '../core/i18n';
 import {
   getPlanarFaceScreenOverlay,
   type ParametricShape,
@@ -440,7 +441,7 @@ export function createFaceComposerWidget(opts: FaceComposerOptions): FaceCompose
     if (!sel) return;
     const asset = getTextureAsset(sel.assetId);
     if (liveTitleEl) {
-      liveTitleEl.textContent = formatItemTitle(sel, asset?.name ?? '贴片', Boolean(sel.crop));
+      liveTitleEl.textContent = tr(formatItemTitle(sel, asset?.name ?? '贴片', Boolean(sel.crop)));
     }
     liveSliderW?.set(Math.round(sel.w));
     liveSliderH?.set(Math.round(sel.h));
@@ -1135,7 +1136,7 @@ export function openFaceComposerModal(
       onclick: () => {
         modalCropOnPick = !modalCropOnPick;
         modalCropToggle.classList.toggle('primary', modalCropOnPick);
-        modalCropToggle.textContent = modalCropOnPick ? '✂️ 先裁切:开' : '✂️ 先裁切';
+        modalCropToggle.textContent = tr(modalCropOnPick ? '✂️ 先裁切:开' : '✂️ 先裁切');
       },
     },
     '✂️ 先裁切',

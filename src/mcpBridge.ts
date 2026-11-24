@@ -1,5 +1,6 @@
 // Browser-side MCP Live Studio Bridge (activates only when ?mcp=1 or Sidecar MCP flag is set)
 import { executeAiStudioCommand, getStudioState, type AiStudioContext } from './core/aiStudioOps';
+import { tr } from './core/i18n';
 import { h } from './ui/dom';
 
 declare global {
@@ -224,9 +225,9 @@ export function initMcpBridge(ctx: AiStudioContext, statusMount?: HTMLElement): 
   function setPillState(mode: 'live' | 'connecting' | 'retrying') {
     pill.classList.remove('live', 'connecting', 'retrying');
     pill.classList.add(mode);
-    if (mode === 'live') pill.textContent = '🤖 AI 已连接';
-    else if (mode === 'connecting') pill.textContent = '🤖 AI 桥接中';
-    else pill.textContent = '🤖 AI 重连中';
+    if (mode === 'live') pill.textContent = tr('🤖 AI 已连接');
+    else if (mode === 'connecting') pill.textContent = tr('🤖 AI 桥接中');
+    else pill.textContent = tr('🤖 AI 重连中');
   }
 
   async function apiFetch(path: string, init?: RequestInit): Promise<Response> {

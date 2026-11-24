@@ -3,6 +3,7 @@
 
 import type { App } from '../app';
 import { clamp } from '../core/color';
+import { tr } from '../core/i18n';
 import type { ParametricShape } from '../core/isoRenderer';
 import {
   BUILTIN_PRESET_GROUP_ID,
@@ -289,9 +290,11 @@ export function openTextureCropDialog(opts: {
     const cropped = cropRgbaBuffer(opts.data, srcW, srcH, crop);
     drawRgbaThumbOnCanvas(previewCanvas, cropped.data, cropped.width, cropped.height, 176, 176);
     const isFull = crop.x === 0 && crop.y === 0 && crop.w === srcW && crop.h === srcH;
-    infoBadge.textContent = isFull
-      ? `整张原图：${srcW}×${srcH} px（未裁剪）`
-      : `裁切区域：起点 (${crop.x}, ${crop.y}) · 尺寸 ${crop.w}×${crop.h} px（原图 ${srcW}×${srcH}）`;
+    infoBadge.textContent = tr(
+      isFull
+        ? `整张原图：${srcW}×${srcH} px（未裁剪）`
+        : `裁切区域：起点 (${crop.x}, ${crop.y}) · 尺寸 ${crop.w}×${crop.h} px（原图 ${srcW}×${srcH}）`,
+    );
   };
 
   type CropDrag =
@@ -611,7 +614,7 @@ export function buildTextureLibrarySection(opts: {
       onclick: () => {
         cropOnPick = !cropOnPick;
         cropToggleBtn.classList.toggle('primary', cropOnPick);
-        cropToggleBtn.textContent = cropOnPick ? '✂️ 贴入先裁切: 开' : '✂️ 贴入先裁切';
+        cropToggleBtn.textContent = tr(cropOnPick ? '✂️ 贴入先裁切: 开' : '✂️ 贴入先裁切');
       },
     },
     '✂️ 贴入先裁切',
@@ -1269,7 +1272,7 @@ export function openTextureImportDialog(
     clearCropBtn.style.display = pendingCrop ? '' : 'none';
     if (res) {
       drawRgbaThumbOnCanvas(outCanvas, res.rectData, res.width, res.height, cw, ch);
-      outBadge.textContent = `规范矩形底图：${res.width}×${res.height} px${pendingCrop ? `（已裁切 ${pendingCrop.w}×${pendingCrop.h}）` : ''}（库中可随时 ▭⇄▱ 无损切换）`;
+      outBadge.textContent = tr(`规范矩形底图：${res.width}×${res.height} px${pendingCrop ? `（已裁切 ${pendingCrop.w}×${pendingCrop.h}）` : ''}（库中可随时 ▭⇄▱ 无损切换）`);
     } else {
       drawRgbaThumbOnCanvas(outCanvas, new Uint8ClampedArray(0), 0, 0, cw, ch);
       outBadge.textContent = '';
@@ -1513,7 +1516,7 @@ export function openTextureImportDialog(
         name = filename.replace(/\.[^.]+$/, '') || name;
         nameIn.value = name;
       }
-      srcInfo.textContent = `已载入原图：${rawW}×${rawH} px${scale < 1 ? `（已最近邻缩至 ${srcW}×${srcH}）` : ''}`;
+      srcInfo.textContent = tr(`已载入原图：${rawW}×${rawH} px${scale < 1 ? `（已最近邻缩至 ${srcW}×${srcH}）` : ''}`);
       rebuildControls();
       drawPreviews();
     } catch (err) {
@@ -1656,7 +1659,7 @@ export function openTextureShearDialog(asset: TextureAsset, onChanged?: () => vo
     drawRgbaThumbOnCanvas(rectCanvas, workRectData, workW, workH, 190, 160);
     const para = getAssetDisplayPixels(buildWorkingAsset());
     drawRgbaThumbOnCanvas(paraCanvas, para.data, para.width, para.height, 190, 160);
-    infoLine.textContent = `矩形尺寸 ${workW}×${workH} px ⇄ 平行四边形形态 ${para.width}×${para.height} px · 当前展示「${displayForm === 'parallelogram' ? '▱ 平行四边形' : '▭ 矩形'}」${workPixelsChanged ? ' (已修改待保存)' : ''}`;
+    infoLine.textContent = tr(`矩形尺寸 ${workW}×${workH} px ⇄ 平行四边形形态 ${para.width}×${para.height} px · 当前展示「${displayForm === 'parallelogram' ? '▱ 平行四边形' : '▭ 矩形'}」${workPixelsChanged ? ' (已修改待保存)' : ''}`);
   };
 
   const rebuildCtrl = () => {

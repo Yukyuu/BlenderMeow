@@ -1,4 +1,5 @@
 import type { App } from '../app';
+import { tr } from '../core/i18n';
 import { cloneShape, type ParametricShape } from '../core/isoRenderer';
 import { formatActionHint, shortcutManager } from '../shortcuts/blenderShortcuts';
 import type { ShortcutScope } from '../shortcuts/types';
@@ -288,7 +289,7 @@ export function buildModalUndoRedoBar(
   const undoBtn = h('button', {
     class: 'btn small',
     type: 'button',
-    title: `撤回上一步编辑${formatActionHint('history.undo')}`,
+    title: `${tr('撤回上一步编辑')}${formatActionHint('history.undo')}`,
     onclick: () => {
       if (binding.undo()) onAfterHistory();
     },
@@ -297,7 +298,7 @@ export function buildModalUndoRedoBar(
   const redoBtn = h('button', {
     class: 'btn small',
     type: 'button',
-    title: `恢复已撤回的编辑${formatActionHint('history.redo')}`,
+    title: `${tr('恢复已撤回的编辑')}${formatActionHint('history.redo')}`,
     onclick: () => {
       if (binding.redo()) onAfterHistory();
     },
@@ -319,8 +320,8 @@ export function buildModalUndoRedoBar(
   );
 
   const unsubShortcuts = shortcutManager.onChange(() => {
-    undoBtn.title = `撤回上一步编辑${formatActionHint('history.undo')}`;
-    redoBtn.title = `恢复已撤回的编辑${formatActionHint('history.redo')}`;
+    undoBtn.title = `${tr('撤回上一步编辑')}${formatActionHint('history.undo')}`;
+    redoBtn.title = `${tr('恢复已撤回的编辑')}${formatActionHint('history.redo')}`;
   });
 
   const scopeId = `modal-${++nextFineScopeSeq}`;

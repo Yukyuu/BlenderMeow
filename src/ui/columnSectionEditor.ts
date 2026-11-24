@@ -3,6 +3,7 @@
 // Cylinders use simplified section ring offset + radius scaling without per-edge angle/lock controls.
 import type { App } from '../app';
 import { clamp } from '../core/color';
+import { tr } from '../core/i18n';
 import {
   applyColumnEdgeEdit,
   applyColumnSectionTransform,
@@ -313,10 +314,10 @@ function createColumnCanvasController(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     if (isoAlign) {
-      ctx.fillText('后 ↑', sizePx * 0.5, 11);
-      ctx.fillText('前 ↓', sizePx * 0.5, sizePx - 11);
-      ctx.fillText('左', 13, sizePx * 0.5);
-      ctx.fillText('右', sizePx - 13, sizePx * 0.5);
+      ctx.fillText(tr('后 ↑'), sizePx * 0.5, 11);
+      ctx.fillText(tr('前 ↓'), sizePx * 0.5, sizePx - 11);
+      ctx.fillText(tr('左'), 13, sizePx * 0.5);
+      ctx.fillText(tr('右'), sizePx - 13, sizePx * 0.5);
     } else {
       const [uTipX, uTipY] = toCanvas(1.12, 0.5);
       const [vTipX, vTipY] = toCanvas(0.5, 1.12);
@@ -514,7 +515,7 @@ function createColumnCanvasController(
       ctx.fillStyle = 'rgba(251, 191, 36, 0.95)';
       ctx.font = '700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`吸附角度: ${activeAngleGuideDeg}°`, 10, 26);
+      ctx.fillText(tr(`吸附角度: ${activeAngleGuideDeg}°`), 10, 26);
     }
   };
 
@@ -1225,7 +1226,7 @@ function createColumnControlsBlock(
       } else {
         cylScaleSlider.set(scalePct);
       }
-      coordBadge.textContent = `中心偏移 (${sec.offsetU.toFixed(3)}, ${sec.offsetV.toFixed(3)}) · 半径 ${Math.round(sec.scale * 100)}%`;
+      coordBadge.textContent = tr(`中心偏移 (${sec.offsetU.toFixed(3)}, ${sec.offsetV.toFixed(3)}) · 半径 ${Math.round(sec.scale * 100)}%`);
       return;
     }
 
@@ -1236,9 +1237,9 @@ function createColumnControlsBlock(
     const sig = `${curShape.shapeType}:${sec.id}:${sec.edges.length}:${edgeIdx}:${sec.edges.map((e) => (e.locked ? '1' : '0')).join('')}`;
 
     if (ctrl.nudgeTarget === 'center') {
-      coordBadge.textContent = `中心偏移 (${sec.offsetU.toFixed(3)}, ${sec.offsetV.toFixed(3)})`;
+      coordBadge.textContent = tr(`中心偏移 (${sec.offsetU.toFixed(3)}, ${sec.offsetV.toFixed(3)})`);
     } else {
-      coordBadge.textContent = `${edge.label ?? `边#${edgeIdx + 1}`} ${edge.locked ? '🔒' : ''}· 偏移 ${edge.offset >= 0 ? '+' : ''}${edge.offset.toFixed(3)} · ${edge.angleDeg.toFixed(1)}°`;
+      coordBadge.textContent = tr(`${edge.label ?? `边#${edgeIdx + 1}`} ${edge.locked ? '🔒' : ''}· 偏移 ${edge.offset >= 0 ? '+' : ''}${edge.offset.toFixed(3)} · ${edge.angleDeg.toFixed(1)}°`);
     }
 
     if (sig === lastEdgeSig && posSlider && angSlider) {
@@ -1559,9 +1560,11 @@ export function openColumnSectionModal(
     const zPx = Math.round((activeSec?.t ?? 0) * live.heightPx);
     const isPoly = isPolygonalColumnShape(live);
     const lockCount = isPoly && activeSec ? activeSec.edges.filter((e) => e.locked).length : 0;
-    secTitle.textContent = `${activeSec?.isTransition ? '✨[过渡面] ' : ''}当前控制面：${activeSec?.name ?? ''} · ${zPx}px (${Math.round((activeSec?.t ?? 0) * 100)}%)${
-      isPoly ? ` · ${activeSec?.edges.length ?? 0}条控制边 (锁定 ${lockCount} 条)` : ' · 圆柱控制环'
-    }`;
+    secTitle.textContent = tr(
+      `${activeSec?.isTransition ? '✨[过渡面] ' : ''}当前控制面：${activeSec?.name ?? ''} · ${zPx}px (${Math.round((activeSec?.t ?? 0) * 100)}%)${
+        isPoly ? ` · ${activeSec?.edges.length ?? 0}条控制边 (锁定 ${lockCount} 条)` : ' · 圆柱控制环'
+      }`,
+    );
 
     secTabsWrap.innerHTML = '';
     for (const s of [...secs].sort((a, b) => a.t - b.t)) {
@@ -1582,7 +1585,7 @@ export function openColumnSectionModal(
 
     const isTrans = Boolean(activeSec?.isTransition);
     const canTrans = activeSec ? canColumnSectionBeTransition(secs, activeSec.id) : false;
-    modalConvertTransBtn.textContent = isTrans ? '✨ 过渡面生效中 · 转为普通面' : '🔄 转换为过渡面';
+    modalConvertTransBtn.textContent = tr(isTrans ? '✨ 过渡面生效中 · 转为普通面' : '🔄 转换为过渡面');
     modalConvertTransBtn.classList.toggle('transition-active', isTrans);
     modalConvertTransBtn.style.opacity = !isTrans && !canTrans ? '0.6' : '1';
 

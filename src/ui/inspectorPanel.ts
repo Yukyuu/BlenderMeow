@@ -18,6 +18,7 @@ import {
 import { createArchPresetNodes } from '../core/arch';
 import { hasActiveColumnSections, isColumnSectionShape, syncColumnSectionsEdgeCount } from '../core/columnSections';
 import { ensureActiveLoftSection } from '../core/loft';
+import { tr } from '../core/i18n';
 import { sanitizeFaceTexturesForShape } from '../core/textures';
 import { buildArchInspectorSection } from './archEditor';
 import { buildColumnInspectorSection } from './columnSectionEditor';
@@ -447,7 +448,7 @@ export class InspectorPanel {
     const active = d.layer;
 
     if (this.app.tool === 'create' || !active || active.kind !== 'shape' || !active.shape) {
-      this.titleEl.textContent = '新建立体预设参数';
+      this.titleEl.textContent = tr('新建立体预设参数');
       this.body.append(
         h('div', { class: 'hint', style: 'margin-bottom:6px' },
           this.app.tool === 'create'
@@ -476,7 +477,7 @@ export class InspectorPanel {
 
     const shape = active.shape;
     const activeId = active.id;
-    this.titleEl.textContent = `选中: ${active.name}`;
+    this.titleEl.textContent = tr(`选中: ${active.name}`);
 
     this.body.append(
       buildShapeForm(shape, this.app, {

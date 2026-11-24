@@ -2,6 +2,7 @@
 import type { App } from '../app';
 import { buildArchCrossSection, getArchSampleCount } from './arch';
 import { clamp } from './color';
+import { tr } from './i18n';
 import {
   evaluateColumnSectionRing,
   hasActiveColumnSections,
@@ -72,9 +73,10 @@ export function drawBadge(
 ) {
   ctx.save();
   ctx.font = '600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  const trText = tr(text);
   const padX = 7;
   const h = 20;
-  const w = Math.ceil(ctx.measureText(text).width + padX * 2);
+  const w = Math.ceil(ctx.measureText(trText).width + padX * 2);
   const bx = Math.round(sx - w / 2);
   const by = Math.round(sy - h / 2);
 
@@ -89,7 +91,7 @@ export function drawBadge(
   ctx.fillStyle = fg;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
-  ctx.fillText(text, bx + w / 2, by + h / 2 + 0.5);
+  ctx.fillText(trText, bx + w / 2, by + h / 2 + 0.5);
   ctx.restore();
 }
 

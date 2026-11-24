@@ -23,6 +23,7 @@ import {
   type ArchSlideRail,
 } from '../core/arch';
 import { clamp } from '../core/color';
+import { tr } from '../core/i18n';
 import { cellsToMeters, zPxToMeters } from '../core/isoMath';
 import type { ParametricShape } from '../core/isoRenderer';
 import { h, openSheet, rangeRow, select, toast, toggle } from './dom';
@@ -470,8 +471,8 @@ function createArchCanvasController(
         ? '当前编辑：🔵 内圈曲线'
         : `当前编辑：🟢 外圈 · 内圈(${innerMode === 'parallel' ? '平行等厚' : innerMode === 'proportional' ? '等比同心' : innerMode === 'equal_vertical' ? '竖向等厚' : '自由控制点'})`
       : '拱顶 H=100%（实心模式）';
-    ctx.fillText(topHint, widthPx * 0.5, Math.max(9, padTop * 0.48));
-    ctx.fillText('底面基准线 (H=0)', widthPx * 0.5, heightPx - Math.max(8, padBot * 0.42));
+    ctx.fillText(tr(topHint), widthPx * 0.5, Math.max(9, padTop * 0.48));
+    ctx.fillText(tr('底面基准线 (H=0)'), widthPx * 0.5, heightPx - Math.max(8, padBot * 0.42));
 
     // Actual solid/hollow cross-section fill preview
     const { spanMetric, heightMetric } = getShapeArchMetrics(shape);
@@ -1674,7 +1675,7 @@ function createArchToolbarAndPresets(
     String(ctrl.nudgeStep),
     (v) => ctrl.setNudgeStep(Number(v) || 0.01),
   );
-  nudgeStepSel.title = '微调步距';
+  nudgeStepSel.title = tr('微调步距');
 
   const fineTuneBar = h(
     'div',
@@ -1729,28 +1730,32 @@ function createArchToolbarAndPresets(
     railNudgeWrap.style.display = !isFree && ctrl.slideAlongCurve ? 'inline-flex' : 'none';
 
     if (isFree) {
-      freeHintEl.textContent = `从左向右一笔画出${isEditingInner ? '🔵 内圈' : '🟢 外圈'}弧线，松手自动拟合控制点`;
+      freeHintEl.textContent = tr(`从左向右一笔画出${isEditingInner ? '🔵 内圈' : '🟢 外圈'}弧线，松手自动拟合控制点`);
     } else {
       const nodes = isEditingInner ? ensureInnerNodes(shape) : ensureOuterNodes(shape);
       const selIdx = ctrl.selectedNodeIdx;
       const nd = nodes[selIdx];
       const isEnd = selIdx === 0 || selIdx === nodes.length - 1;
       const prefix = isEditingInner ? '内圈' : '外圈';
-      modeLabelEl.textContent = `${prefix} #${selIdx + 1}/${nodes.length}${isEnd ? '(脚)' : ''}:`;
-      coordBadge.textContent = nd
-        ? `${prefix}#${selIdx + 1}${isEnd ? '(脚)' : ''} (${nd.s.toFixed(3)}, ${nd.h.toFixed(3)})`
-        : '未选节点';
+      modeLabelEl.textContent = tr(`${prefix} #${selIdx + 1}/${nodes.length}${isEnd ? '(脚)' : ''}:`);
+      coordBadge.textContent = tr(
+        nd
+          ? `${prefix}#${selIdx + 1}${isEnd ? '(脚)' : ''} (${nd.s.toFixed(3)}, ${nd.h.toFixed(3)})`
+          : '未选节点',
+      );
       smoothBtn.classList.toggle('primary', nd?.mode === 'smooth');
       cornerBtn.classList.toggle('primary', nd?.mode === 'corner');
       bezierBtn.classList.toggle('primary', nd?.mode === 'bezier');
     }
 
     // 4. Preset caption
-    presetLabelEl.textContent = isEditingInner
-      ? '🔵 内圈形状预设（点击直接套用到内圈券洞，不影响外圈）：'
-      : isHollow && (shape.archInnerMode ?? 'parallel') !== 'custom'
-        ? '🟢 外圈形状预设（内圈将按上方关系预设自动保持平行/等厚；也可直接拖蓝色◆调壁厚）：'
-        : '点击弧线任意处添加控制点 · 双击节点删除 · 形状预设：';
+    presetLabelEl.textContent = tr(
+      isEditingInner
+        ? '🔵 内圈形状预设（点击直接套用到内圈券洞，不影响外圈）：'
+        : isHollow && (shape.archInnerMode ?? 'parallel') !== 'custom'
+          ? '🟢 外圈形状预设（内圈将按上方关系预设自动保持平行/等厚；也可直接拖蓝色◆调壁厚）：'
+          : '点击弧线任意处添加控制点 · 双击节点删除 · 形状预设：',
+    );
   };
 
   const presetWrap = h(
@@ -1996,7 +2001,7 @@ export function openArchCurveModal(
         targetShape.archHollow && (targetShape.archInnerMode ?? 'parallel') === 'custom'
           ? ` · 内圈点 ${ensureInnerNodes(targetShape).length} 个`
           : '';
-      infoTitle.textContent = `跨度 ${spanCells}格 (${cellsToMeters(spanCells).toFixed(1)}m) · 拱高 ${targetShape.heightPx}px (${zPxToMeters(targetShape.heightPx).toFixed(2)}m) · 外圈点 ${outerNodes.length} 个${innerCount}`;
+      infoTitle.textContent = tr(`跨度 ${spanCells}格 (${cellsToMeters(spanCells).toFixed(1)}m) · 拱高 ${targetShape.heightPx}px (${zPxToMeters(targetShape.heightPx).toFixed(2)}m) · 外圈点 ${outerNodes.length} 个${innerCount}`);
       hb.syncValues();
       u.syncToolbar();
       c.drawCanvas();

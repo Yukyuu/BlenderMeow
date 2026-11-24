@@ -2,6 +2,7 @@
 // Supports solid & hollow columns, per-section inner curves (parallel / proportional / custom), and flat-lying arch presets
 import type { App } from '../app';
 import { clamp } from '../core/color';
+import { tr } from '../core/i18n';
 import { normalizeRotation, zPxToMeters } from '../core/isoMath';
 import type { ParametricShape } from '../core/isoRenderer';
 import {
@@ -758,10 +759,10 @@ function createCurveCanvasController(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     if (isoAlign) {
-      ctx.fillText('后 ↑', sizePx * 0.5, 11);
-      ctx.fillText('前 ↓', sizePx * 0.5, sizePx - 11);
-      ctx.fillText('左', 13, sizePx * 0.5);
-      ctx.fillText('右', sizePx - 13, sizePx * 0.5);
+      ctx.fillText(tr('后 ↑'), sizePx * 0.5, 11);
+      ctx.fillText(tr('前 ↓'), sizePx * 0.5, sizePx - 11);
+      ctx.fillText(tr('左'), 13, sizePx * 0.5);
+      ctx.fillText(tr('右'), sizePx - 13, sizePx * 0.5);
     } else {
       const [uTipX, uTipY] = toCanvas(1.1, 0.5);
       const [vTipX, vTipY] = toCanvas(0.5, 1.1);
@@ -2289,7 +2290,7 @@ function createCurveToolbarAndPresets(
     String(ctrl.snapStep),
     (v) => ctrl.setSnapStep(Number(v) || 0),
   );
-  snapStepSel.title = '网格吸附步距（锚点优先吸附）';
+  snapStepSel.title = tr('网格吸附步距（锚点优先吸附）');
 
   const snapNowBtn = h('button', {
     class: 'btn small',
@@ -2333,7 +2334,7 @@ function createCurveToolbarAndPresets(
     String(ctrl.nudgeStep),
     (v) => ctrl.setNudgeStep(Number(v) || 0.01),
   );
-  nudgeStepSel.title = '微调步距';
+  nudgeStepSel.title = tr('微调步距');
 
   const makeRailNudgeBtn = (label: string, dirSign: -1 | 1, title: string) => {
     let historyReady = false;
@@ -2435,10 +2436,12 @@ function createCurveToolbarAndPresets(
 
       outerTargetBtn.classList.toggle('primary', target === 'outer');
       innerTargetBtn.classList.toggle('primary', target === 'inner');
-      innerTargetBtn.title = isCustomInner
-        ? '编辑当前控制面的独立内圈节点'
-        : '点击自动解锁当前控制面的内圈控制点进行自由编辑（也可双击画布蓝色虚线）';
-      innerTargetBtn.textContent = isCustomInner ? '🔵 编辑内圈' : '🔵 编辑内圈 (点击解锁)';
+      innerTargetBtn.title = tr(
+        isCustomInner
+          ? '编辑当前控制面的独立内圈节点'
+          : '点击自动解锁当前控制面的内圈控制点进行自由编辑（也可双击画布蓝色虚线）',
+      );
+      innerTargetBtn.textContent = tr(isCustomInner ? '🔵 编辑内圈' : '🔵 编辑内圈 (点击解锁)');
       const showReset = target === 'inner' && isCustomInner;
       resetParBtn.style.display = showReset ? '' : 'none';
       resetPropBtn.style.display = showReset ? '' : 'none';
@@ -2452,10 +2455,11 @@ function createCurveToolbarAndPresets(
     snapStepSel.value = String(ctrl.snapStep);
     nudgeStepSel.value = String(ctrl.nudgeStep);
 
-    presetHint.textContent =
+    presetHint.textContent = tr(
       isHollow && target === 'inner'
         ? '预设截面（点击套用到当前控制面【内圈镂空】）：'
-        : '预设截面（点击套用到当前控制面【外圈轮廓】，含平放拱形）：';
+        : '预设截面（点击套用到当前控制面【外圈轮廓】，含平放拱形）：',
+    );
 
     const isFree = ctrl.drawMode === 'freehand';
     freeHintEl.style.display = isFree ? '' : 'none';
@@ -2471,20 +2475,23 @@ function createCurveToolbarAndPresets(
     railNudgeWrap.style.display = !isFree && ctrl.slideAlongCurve ? 'inline-flex' : 'none';
 
     if (isFree) {
-      freeHintEl.textContent =
+      freeHintEl.textContent = tr(
         target === 'inner'
           ? '在下方框内一笔画出闭合【内圈孔洞】，松手自动拟合平滑节点'
-          : '在下方框内一笔画出闭合【外圈轮廓】，松手自动拟合平滑节点';
+          : '在下方框内一笔画出闭合【外圈轮廓】，松手自动拟合平滑节点',
+      );
       return;
     }
 
     const activeNodes = target === 'inner' && sec.innerNodes ? sec.innerNodes : sec.nodes;
     const nd = activeNodes[ctrl.selectedNodeIdx];
     const prefix = isHollow ? (target === 'inner' ? '内圈点' : '外圈点') : '节点';
-    modeLabelEl.textContent = `${prefix} #${ctrl.selectedNodeIdx + 1}/${activeNodes.length}:`;
-    coordBadge.textContent = nd
-      ? `${prefix}#${ctrl.selectedNodeIdx + 1} (${nd.u.toFixed(3)}, ${nd.v.toFixed(3)})`
-      : '未选节点';
+    modeLabelEl.textContent = tr(`${prefix} #${ctrl.selectedNodeIdx + 1}/${activeNodes.length}:`);
+    coordBadge.textContent = tr(
+      nd
+        ? `${prefix}#${ctrl.selectedNodeIdx + 1} (${nd.u.toFixed(3)}, ${nd.v.toFixed(3)})`
+        : '未选节点',
+    );
     smoothBtn.classList.toggle('primary', nd?.mode === 'smooth');
     cornerBtn.classList.toggle('primary', nd?.mode === 'corner');
     bezierBtn.classList.toggle('primary', nd?.mode === 'bezier');
@@ -2678,7 +2685,7 @@ export function openLoftCurveModal(
         ? ` · 自由内圈 ${sec.innerNodes?.length ?? 0}点`
         : ' · 双击蓝虚线可解锁自由内圈 / 拖◆调壁厚'
       : '';
-    secTitle.textContent = `${sec.isTransition ? '✨[过渡面] ' : ''}当前控制面：${sec.name} · 高度 ${zPx}px (${zPxToMeters(zPx).toFixed(2)}m, ${Math.round(sec.t * 100)}%) · 外圈 ${sec.nodes.length}点${hollowNote}`;
+    secTitle.textContent = tr(`${sec.isTransition ? '✨[过渡面] ' : ''}当前控制面：${sec.name} · 高度 ${zPx}px (${zPxToMeters(zPx).toFixed(2)}m, ${Math.round(sec.t * 100)}%) · 外圈 ${sec.nodes.length}点${hollowNote}`);
     modalSecSwitchBar.innerHTML = '';
     const asc = [...allSecs].sort((a, b) => a.t - b.t);
     for (const s of asc) {
@@ -2699,7 +2706,7 @@ export function openLoftCurveModal(
     }
     const isTrans = Boolean(sec.isTransition);
     const canTrans = canLoftSectionBeTransition(allSecs, sec.id);
-    modalConvertTransBtn.textContent = isTrans ? '✨ 过渡面生效中 · 转为普通面' : '🔄 转换为过渡面';
+    modalConvertTransBtn.textContent = tr(isTrans ? '✨ 过渡面生效中 · 转为普通面' : '🔄 转换为过渡面');
     modalConvertTransBtn.classList.toggle('transition-active', isTrans);
     modalConvertTransBtn.style.opacity = !isTrans && !canTrans ? '0.6' : '1';
     solidModalBtn.classList.toggle('primary', !live.loftHollow);

@@ -1,8 +1,42 @@
-// Tiny DOM helpers
+// Tiny DOM helpers with automatic reactive i18n translation
 import { createElement as lucide, type IconNode } from 'lucide';
+import { tr } from '../core/i18n';
 
 type Props = Record<string, unknown> & { class?: string; style?: string };
 type Child = Node | string | number | null | undefined | false;
+
+const TRANS_ATTRS = ['title', 'placeholder', 'aria-label'] as const;
+const CJK_TEST_RE = /[\u4e00-\u9fff]/;
+const origTextMap = new WeakMap<Text, string>();
+const origAttrMap = new WeakMap<Element, Record<string, string>>();
+
+export function retranslateDom(root: ParentNode = document.body) {
+  if (!root || typeof document === 'undefined') return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const tn = node as Text;
+      const orig = origTextMap.get(tn);
+      if (orig !== undefined) {
+        const pe = tn.parentElement;
+        if (pe && pe.closest('[data-no-i18n="1"]')) continue;
+        const next = tr(orig);
+        if (tn.nodeValue !== next) tn.nodeValue = next;
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element;
+      if (el.closest('[data-no-i18n="1"]')) continue;
+      const attrs = origAttrMap.get(el);
+      if (attrs) {
+        for (const [k, orig] of Object.entries(attrs)) {
+          const next = tr(orig);
+          if (el.getAttribute(k) !== next) el.setAttribute(k, next);
+        }
+      }
+    }
+  }
+}
 
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -10,17 +44,38 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   ...children: (Child | Child[])[]
 ): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
+  const noI18n = props['data-no-i18n'] === '1' || props['data-no-i18n'] === true || props['data-no-i18n'] === 1;
+  let savedAttrs: Record<string, string> | null = null;
   for (const [k, v] of Object.entries(props)) {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'class') el.className = String(v);
     else if (k === 'style') el.setAttribute('style', String(v));
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
     else if (k in el && typeof v !== 'string') (el as unknown as Record<string, unknown>)[k] = v;
-    else el.setAttribute(k, v === true ? '' : String(v));
+    else {
+      let str = v === true ? '' : String(v);
+      if (!noI18n && typeof v === 'string' && (TRANS_ATTRS as readonly string[]).includes(k) && CJK_TEST_RE.test(str)) {
+        (savedAttrs ??= {})[k] = str;
+        str = tr(str);
+      }
+      el.setAttribute(k, str);
+    }
   }
+  if (savedAttrs) origAttrMap.set(el, savedAttrs);
   for (const c of children.flat()) {
     if (c === null || c === undefined || c === false) continue;
-    el.append(c instanceof Node ? c : String(c));
+    if (c instanceof Node) {
+      el.append(c);
+    } else {
+      const raw = String(c);
+      if (!noI18n && CJK_TEST_RE.test(raw)) {
+        const tn = document.createTextNode(tr(raw));
+        origTextMap.set(tn, raw);
+        el.append(tn);
+      } else {
+        el.append(raw);
+      }
+    }
   }
   return el;
 }
@@ -40,7 +95,7 @@ export function toast(msg: string) {
     el = h('div', { id: 'toast' });
     document.body.appendChild(el);
   }
-  el.textContent = msg;
+  el.textContent = tr(msg);
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => el!.classList.remove('show'), 2500);

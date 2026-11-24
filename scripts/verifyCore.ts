@@ -54,9 +54,27 @@ import {
   createDefaultShape,
   getPlanarFaceScreenOverlay,
   renderShapeToBuffer,
+  SHAPE_LABELS,
   type FacadePatternType,
   type ShapeKind,
 } from '../src/core/isoRenderer';
+import {
+  APP_AUTHOR,
+  APP_LICENSE_NAME,
+  MIT_LICENSE_TEXT,
+  PIXEL_MEOW_ONLINE_URL,
+} from '../src/core/about';
+import {
+  detectSystemLocale,
+  getLanguageSetting,
+  getLocale,
+  resolveLocale,
+  setLanguageSetting,
+  SUPPORTED_LOCALES,
+  tr,
+} from '../src/core/i18n';
+import { THEME_PRESETS } from '../src/core/theme';
+import { APP_VERSION, CHANGELOG_ENTRIES } from '../src/ui/changelogDialog';
 import {
   applyLoftNodeSlideAtArcS,
   buildLoftNodeSlideRail,
@@ -95,7 +113,7 @@ import {
   isColumnSectionShape,
   syncColumnTransitionSections,
 } from '../src/core/columnSections';
-import { BuilderDocument, BuilderLayer } from '../src/core/document';
+import { BLEND_MODES, BuilderDocument, BuilderLayer } from '../src/core/document';
 import { deserializeBmeowProject, serializeBmeowProject } from '../src/core/exporter';
 import { History } from '../src/core/history';
 import { exportBuilderPsd, exportFourViewLayersPsd } from '../src/core/psd';
@@ -4759,6 +4777,109 @@ async function testOpusV14xReviewFixes() {
   console.log('PASS: Opus v1.4.x review fixes (H1-H3, M1-M10, lazy aux memory, exact cel bands, 4-view shadow groups & concave self-shadow)');
 }
 
+function testV145I18nAndBrandMetadata() {
+  const CJK_RE = /[\u4e00-\u9fff]/;
+
+  // 1. Author, MIT License, Pixel Meow Online URL & version metadata
+  assert.equal(APP_AUTHOR, 'yukyuu', 'Author must be yukyuu');
+  assert.equal(APP_LICENSE_NAME, 'MIT License', 'License name must be MIT License');
+  assert.ok(MIT_LICENSE_TEXT.includes('MIT License'), 'MIT_LICENSE_TEXT must contain MIT License');
+  assert.ok(MIT_LICENSE_TEXT.includes('yukyuu'), 'MIT_LICENSE_TEXT must credit yukyuu');
+  assert.equal(PIXEL_MEOW_ONLINE_URL, 'https://pixelmeow.9rm.uk/', 'Pixel Meow Online URL must match');
+  assert.equal(APP_VERSION, '1.4.5', 'APP_VERSION must be 1.4.5');
+  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.5', 'Latest changelog entry must be 1.4.5');
+
+  const licenseFile = fs.readFileSync(path.resolve(process.cwd(), 'LICENSE'), 'utf8');
+  assert.ok(licenseFile.includes('MIT License') && licenseFile.includes('yukyuu'), 'Root LICENSE file must contain MIT License and yukyuu');
+
+  // 2. System locale detection & resolution
+  assert.equal(detectSystemLocale(['zh-CN']), 'zh');
+  assert.equal(detectSystemLocale(['zh-TW']), 'zh');
+  assert.equal(detectSystemLocale(['en-US']), 'en');
+  assert.equal(detectSystemLocale(['ja-JP']), 'en');
+  assert.equal(resolveLocale('zh', ['en-US']), 'zh');
+  assert.equal(resolveLocale('en', ['zh-CN']), 'en');
+  assert.equal(resolveLocale('auto', ['zh-CN']), 'zh');
+  assert.equal(resolveLocale('auto', ['en-GB']), 'en');
+  assert.equal(SUPPORTED_LOCALES.length, 3);
+
+  // 3. Default App settings & reactive language setter
+  const freshApp = new App();
+  assert.equal(freshApp.settings.pixelMeowWebUrl, 'https://pixelmeow.9rm.uk/', 'Default Pixel Meow URL must be online edition');
+  assert.equal(freshApp.settings.language, 'auto', 'Default language setting must be auto');
+
+  try {
+    freshApp.setLanguage('en');
+    assert.equal(getLanguageSetting(), 'en');
+    assert.equal(getLocale(), 'en');
+
+    const assertNoCjk = (src: string, ctx: string) => {
+      const out = tr(src);
+      assert.ok(!CJK_RE.test(out), `[en i18n] CJK leaked in ${ctx}: "${src}" -> "${out}"`);
+    };
+
+    // Exhaustive checks across all enums, presets, themes, shortcuts & changelog
+    for (const label of Object.values(SHAPE_LABELS)) assertNoCjk(label, 'SHAPE_LABELS');
+    for (const m of BLEND_MODES) assertNoCjk(m.label, `BLEND_MODES.${m.id}`);
+    for (const p of ARCH_PRESETS) assertNoCjk(p.label, `ARCH_PRESETS.${p.id}`);
+    for (const m of ARCH_INNER_MODES) {
+      assertNoCjk(m.label, `ARCH_INNER_MODES.${m.id}.label`);
+      assertNoCjk(m.short, `ARCH_INNER_MODES.${m.id}.short`);
+      assertNoCjk(m.desc, `ARCH_INNER_MODES.${m.id}.desc`);
+    }
+    for (const p of LOFT_PRESETS) assertNoCjk(p.label, `LOFT_PRESETS.${p.id}`);
+    for (const t of THEME_PRESETS) assertNoCjk(t.name, `THEME_PRESETS.${t.id}`);
+    for (const c of BLENDER_SHORTCUT_CATEGORIES) assertNoCjk(c.label, `SHORTCUT_CAT.${c.id}`);
+    for (const a of BLENDER_SHORTCUT_ACTIONS) {
+      assertNoCjk(a.label, `SHORTCUT_ACT.${a.id}.label`);
+      if (a.description) assertNoCjk(a.description, `SHORTCUT_ACT.${a.id}.desc`);
+    }
+    for (const p of BLENDER_SHORTCUT_PRESETS) {
+      assertNoCjk(p.name, `SHORTCUT_PRESET.${p.id}.name`);
+      assertNoCjk(p.description, `SHORTCUT_PRESET.${p.id}.desc`);
+    }
+    for (const entry of CHANGELOG_ENTRIES) {
+      assertNoCjk(entry.title, `CHANGELOG.${entry.version}.title`);
+      entry.items.forEach((it, idx) => assertNoCjk(it, `CHANGELOG.${entry.version}.item[${idx}]`));
+    }
+
+    // Representative dynamic templates & Brand Menu / About strings
+    const samples = [
+      'Blender Meow 菜单、语言与关于',
+      'Blender Meow 菜单',
+      '📌 关于与开源声明 (MIT License)',
+      '查看完整 MIT License 全文',
+      '🎨 打开 Pixel Meow 在线版',
+      '🌐 使用在线版',
+      '视角 90° · 32×16=9.6m · 竖3px=1.6m',
+      '像素 (128, 64) · 网格 (U:2.00, V:1.50) · 视角 180°',
+      '256×256 · 4×4格',
+      '竖直: 24px = 12.80m',
+      '平面: 19.20m (U:2.00格 V:0.00格)',
+      '混合: 23.07m (33.7°)',
+      '跨度 2格 (19.2m) · 拱高 32px (17.07m) · 外圈点 5 个 · 内圈点 5 个',
+      '✨[过渡面] 当前控制面：中腰控制面 · 高度 16px (8.53m, 50%) · 外圈 8点 · 双击蓝虚线可解锁自由内圈 / 拖◆调壁厚',
+      '当前控制面：顶层控制面 · 32px (100%) · 4条控制边 (锁定 1 条)',
+      '顶边 (-V) 🔒· 偏移 +0.125 · 15.0°',
+      '内圈点 #2/6:',
+      '节点#3 (0.500, 0.250)',
+      '规范矩形底图：64×32 px（已裁切 32×16）（库中可随时 ▭⇄▱ 无损切换）',
+      '当前：分段像素色阶（16 档），拖动下方滑条可在 3 ~ 64 档之间微调',
+      `已切换预设：${BLENDER_SHORTCUT_PRESETS[0].name}`,
+    ];
+    for (const s of samples) assertNoCjk(s, 'sample');
+
+    // Switching back to Chinese preserves Chinese verbatim
+    freshApp.setLanguage('zh');
+    assert.equal(getLocale(), 'zh');
+    assert.equal(tr('Blender Meow 菜单'), 'Blender Meow 菜单');
+  } finally {
+    setLanguageSetting('zh');
+  }
+
+  console.log('PASS: v1.4.5 English i18n coverage, Top-Left Brand Menu metadata, MIT License (yukyuu) & Pixel Meow Online URL');
+}
+
 async function main() {
   testRotationClosure();
   testTheoTownRuler();
@@ -4786,6 +4907,7 @@ async function main() {
   await testCurvedShadingAndContrastRange();
   await testExperimentalInterBlockShadow();
   await testOpusV14xReviewFixes();
+  testV145I18nAndBrandMetadata();
   console.log('ALL CORE CHECKS PASSED');
 }
 

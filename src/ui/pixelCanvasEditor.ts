@@ -16,6 +16,7 @@ import {
 } from 'lucide';
 import type { App } from '../app';
 import { clamp, parseHex, toHex, toHex8, type RGBA } from '../core/color';
+import { tr } from '../core/i18n';
 import type { PlanarFaceSpec } from '../core/textures';
 import { formatActionHint, shortcutManager } from '../shortcuts/blenderShortcuts';
 import { openColorPicker } from './colorPicker';
@@ -917,7 +918,8 @@ function drawBadge(
 ): void {
   ctx.save();
   ctx.font = '600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  const m = ctx.measureText(text);
+  const trText = tr(text);
+  const m = ctx.measureText(trText);
   const pw = m.width + 12;
   const ph = 22;
   const r = 6;
@@ -937,7 +939,7 @@ function drawBadge(
   ctx.stroke();
   ctx.fillStyle = '#fff';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, bx + 6, by + ph / 2);
+  ctx.fillText(trText, bx + 6, by + ph / 2);
   ctx.restore();
 }
 

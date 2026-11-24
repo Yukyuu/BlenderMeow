@@ -1,7 +1,9 @@
 {
   "name": "builder-meow",
   "private": true,
-  "version": "1.4.4",
+  "version": "1.4.5",
+  "author": "yukyuu",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

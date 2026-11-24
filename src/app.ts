@@ -1,8 +1,10 @@
 // Central application state, multi-project persistence, grid snap & shape creation defaults
+import { PIXEL_MEOW_ONLINE_URL } from './core/about';
 import { clamp, type RGBA } from './core/color';
 import { BuilderDocument, BuilderLayer } from './core/document';
 import { cloneGroundShadowConfig } from './core/groundShadow';
 import { History } from './core/history';
+import { setLanguageSetting, type LanguageSetting } from './core/i18n';
 import { type GridSnapStep, type MixedMeasureOrder } from './core/isoMath';
 import {
   cloneShape,
@@ -35,6 +37,7 @@ export interface PinnedRulerAnnotation {
 }
 
 export interface Settings {
+  language: LanguageSetting;
   uiTheme: ThemeId;
   uiCustomPanel: RGBA;
   uiCustomAccent: RGBA;
@@ -106,6 +109,7 @@ export class App {
 
   constructor() {
     this.settings = this.loadSettings();
+    setLanguageSetting(this.settings.language);
     this.recentColors = this.loadRecentColors();
     this.createPreset = createDefaultShape('box', {
       baseColor: { r: 168, g: 176, b: 194, a: 255 },
@@ -132,6 +136,7 @@ export class App {
 
   private loadSettings(): Settings {
     const def: Settings = {
+      language: 'auto',
       uiTheme: 'dark',
       uiCustomPanel: { r: 38, g: 30, b: 58, a: 255 },
       uiCustomAccent: { r: 168, g: 85, b: 247, a: 255 },
@@ -147,7 +152,7 @@ export class App {
       autoStackSnap: false,
       autoSortOnEdit: true,
       exportPath: 'BlenderMeow',
-      pixelMeowWebUrl: 'http://localhost:5173',
+      pixelMeowWebUrl: PIXEL_MEOW_ONLINE_URL,
       rulerMode: 'mixed',
       rulerMixedOrder: 'flat_then_vert',
       rulerSnapGrid: true,
@@ -161,6 +166,10 @@ export class App {
       if (!raw) return def;
       const parsed = JSON.parse(raw) as Partial<Settings>;
       const merged: Settings = { ...def, ...parsed };
+      merged.language =
+        parsed.language === 'zh' || parsed.language === 'en' || parsed.language === 'auto'
+          ? parsed.language
+          : 'auto';
       merged.shadeSteps = normalizeShadeSteps(merged.shadeSteps);
       merged.dockedTextureLibrary = Boolean(merged.dockedTextureLibrary);
       if (!parsed.uiTheme) {
@@ -187,6 +196,14 @@ export class App {
     } catch { /* ignore */ }
     this.applyTheme();
     this.emit('settings');
+  }
+
+  setLanguage(language: LanguageSetting) {
+    const norm: LanguageSetting = language === 'zh' || language === 'en' ? language : 'auto';
+    this.settings.language = norm;
+    setLanguageSetting(norm);
+    this.saveSettings();
+    this.emit('language');
   }
 
   get themeTokens(): ThemeTokens {

@@ -1,5 +1,6 @@
 // Platform helpers: IndexedDB storage, SAF file save/pick, and Android/Web/MCP handoff bridge to Pixel Meow
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { PIXEL_MEOW_ONLINE_URL } from './core/about';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import {
@@ -329,7 +330,7 @@ export async function sendToPixelMeowApp(
   }
 
   // 2. Open or reuse Pixel Meow Web URL in a named window and transfer via origin-pinned postMessage
-  const rawBaseUrl = (opts.pixelMeowWebUrl || 'http://localhost:5173').trim();
+  const rawBaseUrl = (opts.pixelMeowWebUrl || PIXEL_MEOW_ONLINE_URL).trim();
   let targetUrl = '';
   let targetOrigin = '';
   try {

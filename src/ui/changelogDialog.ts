@@ -1,10 +1,11 @@
-// Version update changelog dialog + one-time popup check per version upgrade
+// Version update changelog dialog + About / MIT License card + one-time popup check per version upgrade
+import { APP_AUTHOR, APP_LICENSE_NAME, MIT_LICENSE_TEXT, PIXEL_MEOW_ONLINE_URL } from '../core/about';
 import { resolveAssetUrl } from '../core/theotownAssets';
 import { kvGet, kvSet } from '../platform';
-import { h, openSheet } from './dom';
+import { h, openSheet, toast } from './dom';
 
 declare const __APP_VERSION__: string | undefined;
-export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.4';
+export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.5';
 const LAST_SEEN_VERSION_KEY = 'blendermeow.lastSeenVersion';
 
 export interface ChangelogEntry {
@@ -15,6 +16,16 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.4.5',
+    date: '2026-11-24',
+    title: '多语言英文翻译、左上角品牌菜单与 MIT 开源声明',
+    items: [
+      '新增完整中/英文双语界面：自动识别系统语言（中文/英文），并支持在左上角应用图标菜单中随时手动切换「跟随系统 / 简体中文 / English」，无需刷新页面即可实时生效。',
+      '左上角应用图标升级为品牌快捷菜单：集成语言切换、项目主页、更新日志、设置、快捷键以及 Pixel Meow 在线版直达入口（https://pixelmeow.9rm.uk/），并将网页联动默认地址同步更新为在线版。',
+      '新增 MIT License 开源声明与作者署名（yukyuu）：在左上角品牌菜单与更新日志弹窗中清晰展示开源许可信息与完整 MIT 协议文本。',
+    ],
+  },
   {
     version: '1.4.4',
     date: '2026-11-23',
@@ -228,6 +239,70 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   },
 ];
 
+export function buildAboutLicenseCard(): HTMLElement {
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(PIXEL_MEOW_ONLINE_URL);
+      toast('已复制 Pixel Meow 在线版地址');
+    } catch {
+      toast(PIXEL_MEOW_ONLINE_URL);
+    }
+  };
+
+  return h(
+    'div',
+    { class: 'about-license-card' },
+    h('div', { class: 'about-card-title' }, '📌 关于与开源声明 (MIT License)'),
+    h(
+      'p',
+      { class: 'about-card-desc' },
+      'Blender Meow 是一款专为 TheoTown 插件创作者打造的 2:1 等轴测 3D 参数化起型与多视角建模工坊，支持一键分层交接至 Pixel Meow 进行像素精绘。',
+    ),
+    h(
+      'div',
+      { class: 'about-meta-row' },
+      h('span', { class: 'about-meta-pill' }, h('span', { class: 'about-meta-lbl' }, '作者'), h('strong', { 'data-no-i18n': '1' }, APP_AUTHOR)),
+      h('span', { class: 'about-meta-pill' }, h('span', { class: 'about-meta-lbl' }, '开源协议'), h('strong', { 'data-no-i18n': '1' }, APP_LICENSE_NAME)),
+    ),
+    h(
+      'div',
+      { class: 'about-link-row' },
+      h('span', { class: 'about-meta-lbl' }, 'Pixel Meow 在线版'),
+      h(
+        'a',
+        {
+          class: 'about-link-url',
+          href: PIXEL_MEOW_ONLINE_URL,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          'data-no-i18n': '1',
+        },
+        PIXEL_MEOW_ONLINE_URL,
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn small',
+          onclick: () => void copyUrl(),
+        },
+        '🌐 复制地址',
+      ),
+    ),
+    h(
+      'p',
+      { class: 'about-license-note' },
+      '本项目基于 MIT License 开源，欢迎自由使用、学习、修改与二次分发；分发或衍生作品请保留原作者署名（yukyuu）及 MIT 许可证声明。本软件按“原样”提供，不附带任何明示或暗示担保。',
+    ),
+    h(
+      'details',
+      { class: 'about-mit-details' },
+      h('summary', {}, '查看完整 MIT License 全文'),
+      h('pre', { class: 'about-mit-pre', 'data-no-i18n': '1' }, MIT_LICENSE_TEXT),
+    ),
+  );
+}
+
 export function openChangelogDialog(reason: 'manual' | 'update' = 'manual', prevVersion: string | null = null) {
   let close = () => {};
   const bannerMsg =
@@ -247,10 +322,11 @@ export function openChangelogDialog(reason: 'manual' | 'update' = 'manual', prev
       h(
         'div',
         {},
-        h('div', { style: 'font-weight:700;font-size:15px' }, `Blender Meow · v${APP_VERSION}`),
+        h('div', { style: 'font-weight:700;font-size:15px', 'data-no-i18n': '1' }, `Blender Meow · v${APP_VERSION}`),
         h('div', { class: 'hint' }, bannerMsg),
       ),
     ),
+    buildAboutLicenseCard(),
     ...CHANGELOG_ENTRIES.map((entry, idx) =>
       h(
         'div',

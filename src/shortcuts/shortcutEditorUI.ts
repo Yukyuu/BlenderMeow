@@ -1,4 +1,6 @@
 // Standalone, zero-dependency Shortcut Preset & Custom Keybinding Editor UI
+import { tr } from '../core/i18n';
+import { h } from '../ui/dom';
 import { eventToKeyStroke, formatKeyStroke } from './keyCodec';
 import type { ShortcutManager } from './shortcutManager';
 
@@ -7,18 +9,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
   attrs: Record<string, string | boolean | undefined> = {},
   ...children: (Node | string | null | undefined | false)[]
 ): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (v === undefined || v === false) continue;
-    if (k === 'class') node.className = String(v);
-    else if (v === true) node.setAttribute(k, '');
-    else node.setAttribute(k, String(v));
-  }
-  for (const c of children) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c instanceof Node ? c : String(c));
-  }
-  return node;
+  return h(tag, attrs, ...children);
 }
 
 export interface ShortcutEditorUIOptions {
@@ -129,9 +120,11 @@ export function createShortcutEditorUI(
       presetSel.append(el('option', { value: 'custom', selected: true }, '✨ 自定义修改方案 (基于预设)'));
     }
     const found = presets.find((p) => p.id === activeId);
-    presetDescEl.textContent = found
-      ? found.description
-      : '当前为自定义键位布局；点击任意按键槽位可重新录制，按 Esc 取消，按 Backspace 清空槽位。';
+    presetDescEl.textContent = tr(
+      found
+        ? found.description
+        : '当前为自定义键位布局；点击任意按键槽位可重新录制，按 Esc 取消，按 Backspace 清空槽位。',
+    );
   };
 
   const renderList = () => {
@@ -147,7 +140,9 @@ export function createShortcutEditorUI(
         const codesText = manager.getBindings(a.id).map((ks) => ks.code.toLowerCase()).join(' ');
         return (
           a.label.toLowerCase().includes(q) ||
+          tr(a.label).toLowerCase().includes(q) ||
           (a.description ?? '').toLowerCase().includes(q) ||
+          tr(a.description ?? '').toLowerCase().includes(q) ||
           a.id.toLowerCase().includes(q) ||
           bindingsText.includes(q) ||
           codesText.includes(q)

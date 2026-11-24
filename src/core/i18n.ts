@@ -28,7 +28,7 @@ const EN_DICT: Record<string, string> = {
   ...EN_SHORTCUTS_CHANGELOG,
 };
 
-const SETTINGS_STORAGE_KEY = 'blendermeow.settings';
+const SETTINGS_STORAGE_KEY = 'buildermeow.settings.v1';
 
 /**
  * Detect effective UI locale from browser/OS language tags.
@@ -73,6 +73,10 @@ const listeners = new Set<() => void>();
 function syncDocumentLang() {
   if (typeof document !== 'undefined' && document.documentElement) {
     document.documentElement.lang = activeLocale === 'zh' ? 'zh-CN' : 'en';
+    document.title =
+      activeLocale === 'en'
+        ? 'Blender Meow · 2:1 Isometric 3D Pixel Studio'
+        : 'Blender Meow · 伪3D等距像素建模工坊';
   }
 }
 syncDocumentLang();
@@ -136,7 +140,10 @@ function translateSingleLine(core: string): string {
   for (let i = 0; i < EN_PATTERNS.length; i++) {
     const [re, fmt] = EN_PATTERNS[i];
     const m = core.match(re);
-    if (m) return fmt(m[0], ...m.slice(1));
+    if (m) {
+      const out = fmt(m[0], ...m.slice(1));
+      if (out !== core) return out;
+    }
   }
 
   // Trailing shortcut hint: "操作名称 (Ctrl+Z)" or "操作名称 (Q / Shift+E)"
