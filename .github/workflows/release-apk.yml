@@ -1,0 +1,105 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布版本号（留空则自动读取 package.json，例如 v1.4.4）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version & tag
+        id: meta
+        shell: bash
+        run: |
+          PKG_VER="$(node -p "require('./package.json').version")"
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="v${PKG_VER}"
+          fi
+          [[ "$TAG" == v* ]] || TAG="v${TAG}"
+          VERSION="${TAG#v}"
+          echo "pkg_ver=${PKG_VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: ${TAG} (package.json=${PKG_VER})"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app & standalone offline bundle
+        run: |
+          npm run build
+          node scripts/packageWeb.mjs
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build Android APK
+        shell: bash
+        run: |
+          sed -i 's|mirrors.cloud.tencent.com/gradle/|services.gradle.org/distributions/|g' android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/\r$//' android/gradlew
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          VER="${{ steps.meta.outputs.version }}"
+          PKG_VER="${{ steps.meta.outputs.pkg_ver }}"
+
+          cp android/app/build/outputs/apk/debug/app-debug.apk "release-assets/BlenderMeow-v${VER}.apk"
+          cp "BlenderMeow-v${PKG_VER}-Web.html" "release-assets/BlenderMeow-v${VER}-Web.html"
+          (cd release-assets && zip -9 "BlenderMeow-v${VER}-Web.zip" "BlenderMeow-v${VER}-Web.html")
+
+          ls -lh release-assets
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists, updating assets..."
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "Blender Meow ${TAG}" \
+              --generate-notes
+          fi
