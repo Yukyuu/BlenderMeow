@@ -1987,7 +1987,7 @@ export function buildColumnInspectorSection(
         const dup: ColumnSection = {
           ...cur,
           id: nextColSectionId(),
-          name: `${cur.name} 副本`,
+          name: tr(`${cur.name} 副本`),
           edges: cur.edges.map((e) => ({ ...e })),
         };
         delete dup.isTransition;

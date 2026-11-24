@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 export const REPO_ROOT = path.resolve(__dirname, '..');
 export const PIXELPAD_HUB_MODULE = path.resolve(REPO_ROOT, '..', 'PixelPad', 'mcp', 'hub.mjs');
 
-export const HUB_VERSION = '1.4.5';
+export const HUB_VERSION = '1.4.6';
 export const DEFAULT_HUB_PORT = Number(process.env.BLENDERMEOW_MCP_PORT || 17921);
 export const HUB_STATE_DIR = path.join(os.homedir(), '.blendermeow-mcp');
 export function getHubFilePath(customPath = '') {

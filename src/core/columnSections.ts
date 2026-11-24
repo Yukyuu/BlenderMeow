@@ -1,4 +1,5 @@
 import { clamp } from './color';
+import { tr } from './i18n';
 import type { ParametricShape, ShapeKind } from './isoRenderer';
 
 export type ColumnInterpMode = 'smooth' | 'linear';
@@ -179,7 +180,7 @@ export function createDefaultColumnSections(shapeType: ShapeKind, prismSides = 6
   return [
     {
       id: 'colsec-1',
-      name: '底层控制面',
+      name: tr('底层控制面'),
       t: 0,
       scale: 1,
       twistDeg: 0,
@@ -189,7 +190,7 @@ export function createDefaultColumnSections(shapeType: ShapeKind, prismSides = 6
     },
     {
       id: 'colsec-2',
-      name: '顶层控制面',
+      name: tr('顶层控制面'),
       t: 1,
       scale: 1,
       twistDeg: 0,
@@ -248,7 +249,7 @@ export function normalizeColumnSections(
     seenIds.add(id);
     const item: ColumnSection = {
       id,
-      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `控制面 #${out.length + 1}`,
+      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : tr(`控制面 #${out.length + 1}`),
       t: clamp(Number.isFinite(raw.t) ? raw.t : 0, 0, 1),
       scale: clamp(Number.isFinite(raw.scale) ? raw.scale : 1, 0.15, 1.6),
       twistDeg: clamp(Number.isFinite(raw.twistDeg) ? raw.twistDeg : 0, -180, 180),
@@ -291,7 +292,7 @@ export function ensureColumnSections(shape: ParametricShape): ColumnSection[] {
       }
       seenIds.add(id);
       sec.id = id;
-      sec.name = typeof sec.name === 'string' && sec.name.trim() ? sec.name.trim() : `控制面 #${writeIdx + 1}`;
+      sec.name = typeof sec.name === 'string' && sec.name.trim() ? sec.name.trim() : tr(`控制面 #${writeIdx + 1}`);
       sec.t = clamp(Number.isFinite(sec.t) ? sec.t : 0, 0, 1);
       sec.scale = clamp(Number.isFinite(sec.scale) ? sec.scale : 1, 0.15, 1.6);
       sec.twistDeg = clamp(Number.isFinite(sec.twistDeg) ? sec.twistDeg : 0, -180, 180);
@@ -386,7 +387,7 @@ export function insertColumnSectionAtT(
 
   const created: ColumnSection = {
     id: nextColSectionId(),
-    name: name ?? `控制面 #${secs.length + 1}`,
+    name: name ?? tr(`控制面 #${secs.length + 1}`),
     t: clampedT,
     scale: Math.round(scale * 1000) / 1000,
     twistDeg: Math.round(twistDeg * 100) / 100,
@@ -517,7 +518,7 @@ export function insertColumnTransitionSection(
   if (sorted.length < 2) {
     const only = sorted[0];
     const edgeT = only.t < 0.5 ? 1.0 : 0.0;
-    insertColumnSectionAtT(shape, edgeT, edgeT >= 0.5 ? '顶层控制面' : '底层控制面');
+    insertColumnSectionAtT(shape, edgeT, tr(edgeT >= 0.5 ? '顶层控制面' : '底层控制面'));
     sorted = [...secs].sort((a, b) => a.t - b.t);
   }
   const minT = sorted[0].t;
@@ -525,7 +526,7 @@ export function insertColumnTransitionSection(
   const eps = Math.min(0.01, (maxT - minT) * 0.1);
   const clampedT =
     maxT - minT > 1e-4 ? clamp(targetT, minT + eps, maxT - eps) : clamp(targetT, 0.01, 0.99);
-  const created = insertColumnSectionAtT(shape, clampedT, '过渡控制面');
+  const created = insertColumnSectionAtT(shape, clampedT, tr('过渡控制面'));
   if (!created) return null;
   created.isTransition = true;
   syncColumnTransitionSections(shape);

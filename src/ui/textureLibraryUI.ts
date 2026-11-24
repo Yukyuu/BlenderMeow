@@ -824,7 +824,7 @@ export function buildTextureLibrarySection(opts: {
                   openPixelCanvasEditor({
                     app: appRef,
                     title: `🖌️ 基于预设「${asset.name}」绘制副本`,
-                    initialName: `${asset.name} 副本`,
+                    initialName: tr(`${asset.name} 副本`),
                     initialData: new Uint8ClampedArray(asset.rectData),
                     width: asset.width,
                     height: asset.height,
@@ -832,7 +832,7 @@ export function buildTextureLibrarySection(opts: {
                     confirmLabel: '✓ 另存为新贴图',
                     onSave: (res) => {
                       const copy = makeTextureAssetFromRgba({
-                        name: res.name.trim() || `${asset.name} 副本`,
+                        name: res.name.trim() || tr(`${asset.name} 副本`),
                         width: res.width,
                         height: res.height,
                         rectData: res.data,
@@ -1028,13 +1028,13 @@ export function buildTextureLibrarySection(opts: {
             openPixelCanvasEditor({
               app: opts.app!,
               title: '🖌️ 绘制新像素纹理',
-              initialName: '手绘像素纹理',
+              initialName: tr('手绘像素纹理'),
               width: initW,
               height: initH,
               allowResize: true,
               onSave: (res) => {
                 const created = makeTextureAssetFromRgba({
-                  name: res.name.trim() || '手绘像素纹理',
+                  name: res.name.trim() || tr('手绘像素纹理'),
                   width: res.width,
                   height: res.height,
                   rectData: res.data,
@@ -1082,7 +1082,7 @@ export function openTextureImportDialog(
   let srcData: Uint8ClampedArray | null = null;
   let srcW = 0;
   let srcH = 0;
-  let name = '自定义贴图';
+  let name = tr('自定义贴图');
 
   let importKind: TextureDisplayForm = 'rect';
   let rectTargetScale = 1;
@@ -1103,7 +1103,7 @@ export function openTextureImportDialog(
     class: 'text-input',
     value: name,
     placeholder: '贴图名称',
-    oninput: () => { name = nameIn.value.trim() || '自定义贴图'; },
+    oninput: () => { name = nameIn.value.trim() || tr('自定义贴图'); },
   }) as HTMLInputElement;
 
   const srcInfo = h('div', { class: 'hint' }, '尚未载入图像：可选择本地 PNG/JPG，或直接拖拽 / Ctrl+V 粘贴图片。');
@@ -1958,8 +1958,8 @@ export function openActiveFacePixelEditor(
   const extracted = extractFaceTextureLayerBuffer(faceSpec, slot);
   const baseColor = faceSpec.isTop && shape.roofColor ? shape.roofColor : shape.baseColor;
   const defaultName = resolvedLayer
-    ? `${resolvedLayer.name}·${faceSpec.shortLabel}`
-    : `${faceSpec.shortLabel}整面贴图`;
+    ? `${tr(resolvedLayer.name)}·${tr(faceSpec.shortLabel)}`
+    : tr(`${faceSpec.shortLabel}整面贴图`);
 
   openPixelCanvasEditor({
     app,

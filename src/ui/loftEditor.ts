@@ -157,7 +157,7 @@ function insertStandardSectionOnShape(shape: ParametricShape, mutOpts: LoftMutat
   }
   const created: LoftSection = {
     id: nextLoftSectionId(),
-    name: `控制面 #${secs.length + 1}`,
+    name: tr(`控制面 #${secs.length + 1}`),
     t: clamp(newT, 0, 1),
     scale,
     twistDeg,
@@ -185,7 +185,7 @@ function insertTransitionSectionOnShape(shape: ParametricShape, mutOpts: LoftMut
     const edgeT = base.t < 0.5 ? 1.0 : 0.0;
     secs.push({
       id: nextLoftSectionId(),
-      name: edgeT >= 0.5 ? '顶层控制面' : '底层控制面',
+      name: tr(edgeT >= 0.5 ? '顶层控制面' : '底层控制面'),
       t: edgeT,
       scale: base.scale,
       twistDeg: base.twistDeg,
@@ -213,7 +213,7 @@ function insertTransitionSectionOnShape(shape: ParametricShape, mutOpts: LoftMut
   const newT = Math.round(clampedT * 100) / 100;
   const created: LoftSection = {
     id: nextLoftSectionId(),
-    name: '过渡控制面',
+    name: tr('过渡控制面'),
     t: newT,
     scale: Math.round(((secA.scale + secB.scale) * 0.5) * 100) / 100,
     twistDeg: Math.round((secA.twistDeg + secB.twistDeg) * 0.5),
@@ -3182,7 +3182,14 @@ export function buildLoftInspectorSection(
   };
 
   const isPositionalSecName = (nm: string) =>
-    nm === '底层控制面' || nm === '中腰控制面' || nm === '顶层控制面' || /^控制面 #\d+$/.test(nm);
+    nm === '底层控制面' ||
+    nm === '中腰控制面' ||
+    nm === '顶层控制面' ||
+    nm === 'Bottom Section' ||
+    nm === 'Mid Section' ||
+    nm === 'Top Section' ||
+    /^控制面 #\d+$/.test(nm) ||
+    /^Section #\d+$/.test(nm);
 
   // Stack action buttons (+ Add, ✨ Transition, Duplicate, Swap Up, Swap Down, Delete)
   const addSecBtn = h(
@@ -3225,7 +3232,7 @@ export function buildLoftInspectorSection(
         const nt = cur.t + 0.1 <= 1 ? cur.t + 0.1 : Math.max(0, cur.t - 0.1);
         const dup: LoftSection = {
           id: nextLoftSectionId(),
-          name: `${cur.name} 副本`,
+          name: tr(`${cur.name} 副本`),
           t: Math.round(nt * 100) / 100,
           scale: cur.scale,
           twistDeg: cur.twistDeg,

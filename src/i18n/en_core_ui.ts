@@ -23,6 +23,12 @@ export const EN_CORE_UI: Record<string, string> = {
   '已复制 Pixel Meow 在线版地址': 'Copied Pixel Meow Online URL',
   '🌐 使用在线版': '🌐 Use Online Edition',
   '已切换为 Pixel Meow 在线版地址': 'Switched to Pixel Meow Online URL',
+  '完善英文模式下的新建图层与实体自动命名':
+    'Localized Auto-Naming for New Layers & Entities in English Mode',
+  '修复英文界面下新建 3D 图形图层、复制图层、新建项目、默认绿地底座、导入参考图/PSD、曲面与柱体控制面以及自定义贴图时仍自动生成中文名称的问题，现已全面随当前语言自动命名。':
+    'Fixed auto-generated names staying in Chinese when creating new 3D shape layers, duplicating layers, creating new projects, adding default grass bases, importing reference/PSD layers, adding loft/column sections, or creating custom textures in English mode.',
+  '同步支持旧工程中已生成的中文默认编号图层名与项目名在切换至英文界面后实时显示为对应英文名称（用户自定义名称不受影响）。':
+    'Also added live English display translation for legacy auto-numbered default layer and project names when switching to English while leaving custom user names untouched.',
   '多语言英文翻译、左上角品牌菜单与 MIT 开源声明':
     'English Translation, Top-Left Brand Menu & MIT License',
   '新增完整中/英文双语界面：自动识别系统语言（中文/英文），并支持在左上角应用图标菜单中随时手动切换「跟随系统 / 简体中文 / English」，无需刷新页面即可实时生效。':

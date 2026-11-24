@@ -1,5 +1,6 @@
 // Parametric + Raster layered document model for Builder Meow
 import { getArchSampleCount, normalizeArchNodes, sampleArchOuterCurve } from './arch';
+import { tr } from './i18n';
 import {
   ensureActiveColumnSection,
   getColumnLocalBounds,
@@ -196,7 +197,7 @@ export class BuilderLayer {
     data?: Uint8ClampedArray,
   ) {
     this.id = layerSeq++;
-    this.name = name ?? `图层 ${this.id}`;
+    this.name = name ?? tr(`图层 ${this.id}`);
     this.kind = kind;
     this.shape = shape ? cloneShape(shape) : undefined;
     this.data = data ? new Uint8ClampedArray(data) : new Uint8ClampedArray(width * height * 4);
@@ -268,7 +269,7 @@ export class BuilderLayer {
     const l = new BuilderLayer(
       this.width,
       this.height,
-      `${this.name} 副本`,
+      tr(`${this.name} 副本`),
       this.kind,
       this.shape ? cloneShape(this.shape) : undefined,
       this.data,

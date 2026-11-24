@@ -1,7 +1,7 @@
 {
   "name": "builder-meow",
   "private": true,
-  "version": "1.4.5",
+  "version": "1.4.6",
   "author": "yukyuu",
   "license": "MIT",
   "type": "module",

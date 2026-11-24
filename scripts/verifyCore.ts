@@ -4786,8 +4786,8 @@ function testV145I18nAndBrandMetadata() {
   assert.ok(MIT_LICENSE_TEXT.includes('MIT License'), 'MIT_LICENSE_TEXT must contain MIT License');
   assert.ok(MIT_LICENSE_TEXT.includes('yukyuu'), 'MIT_LICENSE_TEXT must credit yukyuu');
   assert.equal(PIXEL_MEOW_ONLINE_URL, 'https://pixelmeow.9rm.uk/', 'Pixel Meow Online URL must match');
-  assert.equal(APP_VERSION, '1.4.5', 'APP_VERSION must be 1.4.5');
-  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.5', 'Latest changelog entry must be 1.4.5');
+  assert.equal(APP_VERSION, '1.4.6', 'APP_VERSION must be 1.4.6');
+  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.6', 'Latest changelog entry must be 1.4.6');
 
   const licenseFile = fs.readFileSync(path.resolve(process.cwd(), 'LICENSE'), 'utf8');
   assert.ok(licenseFile.includes('MIT License') && licenseFile.includes('yukyuu'), 'Root LICENSE file must contain MIT License and yukyuu');
@@ -4866,18 +4866,51 @@ function testV145I18nAndBrandMetadata() {
       '规范矩形底图：64×32 px（已裁切 32×16）（库中可随时 ▭⇄▱ 无损切换）',
       '当前：分段像素色阶（16 档），拖动下方滑条可在 3 ~ 64 档之间微调',
       `已切换预设：${BLENDER_SHORTCUT_PRESETS[0].name}`,
+      '立方体 / 长方体 3',
+      '圆柱体 4 副本',
+      '曲面柱 / 平放拱 (控制面) 5',
     ];
     for (const s of samples) assertNoCjk(s, 'sample');
+    assert.equal(tr('立方体 / 长方体 3'), 'Box / Cuboid 3');
+    assert.equal(tr('圆柱体 4 副本'), 'Cylinder 4 Copy');
 
-    // Switching back to Chinese preserves Chinese verbatim
+    // Verify locale-aware auto-naming on new layers, starter doc, clone, newDocument & sections in English mode
+    const enApp = new App();
+    enApp.setLanguage('en');
+    enApp.newDocument(128, 128, 2, 2, tr('等距建筑 2'), true, true);
+    assert.equal(enApp.docName, 'Iso Building 2');
+    assert.ok(!CJK_RE.test(enApp.doc.layers[0].name), `English base layer must have no CJK: ${enApp.doc.layers[0].name}`);
+    for (const kind of Object.keys(SHAPE_LABELS) as ShapeKind[]) {
+      const added = enApp.addShapeLayer(createDefaultShape(kind));
+      assert.ok(!CJK_RE.test(added.name), `English auto-named ${kind} layer must have no CJK: "${added.name}"`);
+    }
+    const cloned = enApp.doc.layers[enApp.doc.layers.length - 1].clone();
+    assert.ok(cloned.name.endsWith(' Copy') && !CJK_RE.test(cloned.name), `Cloned layer in EN must end with Copy: "${cloned.name}"`);
+    const loftShape = createDefaultShape('loft');
+    const loftSecs = normalizeLoftSections(loftShape.loftSections);
+    for (const sec of loftSecs) {
+      assert.ok(!CJK_RE.test(sec.name), `English loft section must have no CJK: "${sec.name}"`);
+    }
+    const colShape = createDefaultShape('box');
+    const colSecs = ensureColumnSections(colShape);
+    for (const sec of colSecs) {
+      assert.ok(!CJK_RE.test(sec.name), `English column section must have no CJK: "${sec.name}"`);
+    }
+    // Custom layer names are preserved verbatim in English mode
+    const customLayer = enApp.addShapeLayer(createDefaultShape('box'), '东京塔');
+    assert.equal(customLayer.name, '东京塔');
+
+    // Switching back to Chinese preserves Chinese verbatim and generates Chinese auto-names
     freshApp.setLanguage('zh');
     assert.equal(getLocale(), 'zh');
     assert.equal(tr('Blender Meow 菜单'), 'Blender Meow 菜单');
+    const zhBox = freshApp.addShapeLayer(createDefaultShape('box'));
+    assert.ok(zhBox.name.startsWith('立方体 / 长方体 '), `Chinese auto-named box layer must stay Chinese: "${zhBox.name}"`);
   } finally {
     setLanguageSetting('zh');
   }
 
-  console.log('PASS: v1.4.5 English i18n coverage, Top-Left Brand Menu metadata, MIT License (yukyuu) & Pixel Meow Online URL');
+  console.log('PASS: v1.4.6 English i18n coverage, localized layer/entity auto-naming, Top-Left Brand Menu, MIT License (yukyuu) & Pixel Meow Online URL');
 }
 
 async function main() {

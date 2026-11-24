@@ -1,6 +1,7 @@
 // Pure 2D closed cross-section curve math (solid & hollow inner loops), preset templates,
 // exact metric parallel inward offset + clamping, seam alignment, and multi-section loft interpolation
 import { clamp } from './color';
+import { tr } from './i18n';
 
 export type LoftNodeMode = 'smooth' | 'corner' | 'bezier';
 
@@ -445,7 +446,7 @@ export function createDefaultLoftSections(): LoftSection[] {
   return [
     {
       id: 'sec-1',
-      name: '底层控制面',
+      name: tr('底层控制面'),
       t: 0,
       scale: 1.0,
       twistDeg: 0,
@@ -455,7 +456,7 @@ export function createDefaultLoftSections(): LoftSection[] {
     },
     {
       id: 'sec-2',
-      name: '中腰控制面',
+      name: tr('中腰控制面'),
       t: 0.5,
       scale: 0.74,
       twistDeg: 0,
@@ -465,7 +466,7 @@ export function createDefaultLoftSections(): LoftSection[] {
     },
     {
       id: 'sec-3',
-      name: '顶层控制面',
+      name: tr('顶层控制面'),
       t: 1.0,
       scale: 0.92,
       twistDeg: 0,
@@ -541,7 +542,7 @@ export function normalizeLoftSections(secs?: LoftSection[] | null): LoftSection[
     seenIds.add(id);
     const sec: LoftSection = {
       id,
-      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `控制面 #${out.length + 1}`,
+      name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : tr(`控制面 #${out.length + 1}`),
       t: clamp(Number.isFinite(raw.t) ? raw.t : 0, 0, 1),
       scale: clamp(Number.isFinite(raw.scale) ? raw.scale : 1, 0.15, 1.6),
       twistDeg: clamp(Number.isFinite(raw.twistDeg) ? raw.twistDeg : 0, -180, 180),
@@ -591,7 +592,7 @@ export function sanitizeLoftSectionsInPlace(secs: LoftSection[]): void {
     }
     seenIds.add(id);
     raw.id = id;
-    raw.name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `控制面 #${writeIdx + 1}`;
+    raw.name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : tr(`控制面 #${writeIdx + 1}`);
     raw.t = clamp(Number.isFinite(raw.t) ? raw.t : 0, 0, 1);
     raw.scale = clamp(Number.isFinite(raw.scale) ? raw.scale : 1, 0.15, 1.6);
     raw.twistDeg = clamp(Number.isFinite(raw.twistDeg) ? raw.twistDeg : 0, -180, 180);

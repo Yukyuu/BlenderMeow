@@ -14,6 +14,7 @@ import {
   type ArchPresetId,
 } from './arch';
 import { clamp, parseColorCode, parseHex, toHex, toHex8, type RGBA } from './color';
+import { tr } from './i18n';
 import {
   applyColumnEdgeEdit,
   applyColumnSectionTransform,
@@ -865,7 +866,7 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
         const h = clamp(Math.round(Number(cmd.height) || 256), 32, 2048);
         const plotU = clamp(Math.round(Number(cmd.plotU) || 4), 1, 24);
         const plotV = clamp(Math.round(Number(cmd.plotV) || 4), 1, 24);
-        const name = typeof cmd.name === 'string' && cmd.name.trim() ? cmd.name.trim() : 'AI 等距建筑';
+        const name = typeof cmd.name === 'string' && cmd.name.trim() ? cmd.name.trim() : tr('AI 等距建筑');
         const withBase = cmd.withBase !== false;
         const withGroundShadow = cmd.withGroundShadow !== false;
         app.newDocument(w, h, plotU, plotV, name, withBase, withGroundShadow);
@@ -1181,7 +1182,7 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
           const base = new BuilderLayer(
             app.doc.width,
             app.doc.height,
-            `TheoTown ${app.doc.plotU}×${app.doc.plotV} 底座`,
+            tr(`TheoTown ${app.doc.plotU}×${app.doc.plotV} 底座`),
             'shape',
             createDefaultShape('theotown_base', { u: 0, v: 0, zPx: 0, sizeU: app.doc.plotU, sizeV: app.doc.plotV, heightPx: 0 }),
           );
@@ -1436,7 +1437,7 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
       }
       const label = typeof cmd.name === 'string' && cmd.name.trim()
         ? cmd.name.trim()
-        : `${SHAPE_LABELS[shape.shapeType]} ${app.doc.layers.length + 1}`;
+        : `${tr(SHAPE_LABELS[shape.shapeType])} ${app.doc.layers.length + 1}`;
       const created = app.addShapeLayer(shape, label);
       if (typeof cmd.visible === 'boolean') created.visible = cmd.visible;
       if (typeof cmd.opacity === 'number') created.opacity = clamp(cmd.opacity, 0, 1);
@@ -1510,7 +1511,7 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
         const nodes = createLoftPresetNodes(preset);
         const created: LoftSection = {
           id: nextLoftSectionId(),
-          name: typeof cmd.name === 'string' && cmd.name.trim() ? cmd.name.trim() : `控制面 #${secs.length + 1}`,
+          name: typeof cmd.name === 'string' && cmd.name.trim() ? cmd.name.trim() : tr(`控制面 #${secs.length + 1}`),
           t,
           scale: clamp(Number(cmd.scale ?? 1), 0.1, 1.8),
           twistDeg: clamp(Number(cmd.twistDeg ?? 0), -180, 180),

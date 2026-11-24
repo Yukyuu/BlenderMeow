@@ -27,7 +27,7 @@ export function openNewProjectDialog(app: App, afterFit: () => void) {
   let withBase = true;
   let withShadow = true;
 
-  const nameIn = h('input', { type: 'text', class: 'text-input', value: `等距建筑 ${app.projects.length + 1}` }) as HTMLInputElement;
+  const nameIn = h('input', { type: 'text', class: 'text-input', value: tr(`等距建筑 ${app.projects.length + 1}`) }) as HTMLInputElement;
   const wIn = h('input', { type: 'number', class: 'num wide', min: '64', max: '2048', value: '256' }) as HTMLInputElement;
   const hIn = h('input', { type: 'number', class: 'num wide', min: '64', max: '2048', value: '256' }) as HTMLInputElement;
   const uIn = h('input', { type: 'number', class: 'num', min: '1', max: '16', value: '4' }) as HTMLInputElement;
@@ -93,7 +93,7 @@ export function openNewProjectDialog(app: App, afterFit: () => void) {
           canvasH = Math.max(32, Math.min(2048, Math.round(+hIn.value || 256)));
           plotU = Math.max(1, Math.min(24, Math.round(+uIn.value || 4)));
           plotV = Math.max(1, Math.min(24, Math.round(+vIn.value || 4)));
-          app.newDocument(canvasW, canvasH, plotU, plotV, nameIn.value.trim() || '未命名工程', withBase, withShadow);
+          app.newDocument(canvasW, canvasH, plotU, plotV, nameIn.value.trim() || tr('未命名工程'), withBase, withShadow);
           close();
           afterFit();
         },

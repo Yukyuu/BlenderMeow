@@ -4,7 +4,7 @@ import { clamp, type RGBA } from './core/color';
 import { BuilderDocument, BuilderLayer } from './core/document';
 import { cloneGroundShadowConfig } from './core/groundShadow';
 import { History } from './core/history';
-import { setLanguageSetting, type LanguageSetting } from './core/i18n';
+import { setLanguageSetting, tr, type LanguageSetting } from './core/i18n';
 import { type GridSnapStep, type MixedMeasureOrder } from './core/isoMath';
 import {
   cloneShape,
@@ -110,6 +110,7 @@ export class App {
   constructor() {
     this.settings = this.loadSettings();
     setLanguageSetting(this.settings.language);
+    this.docName = tr('等距建筑 1');
     this.recentColors = this.loadRecentColors();
     this.createPreset = createDefaultShape('box', {
       baseColor: { r: 168, g: 176, b: 194, a: 255 },
@@ -243,7 +244,7 @@ export class App {
     const base = new BuilderLayer(
       256,
       256,
-      'TheoTown 4×4 绿地底座',
+      tr('TheoTown 4×4 绿地底座'),
       'shape',
       createDefaultShape('theotown_base', { u: 0, v: 0, zPx: 0, sizeU: 4, sizeV: 4, heightPx: 0 }),
     );
@@ -253,7 +254,7 @@ export class App {
     const tower = new BuilderLayer(
       256,
       256,
-      '主楼立方体',
+      tr('主楼立方体'),
       'shape',
       createDefaultShape('box', {
         u: 1,
@@ -299,7 +300,7 @@ export class App {
       const base = new BuilderLayer(
         w,
         h,
-        `TheoTown ${plotU}×${plotV} 底座`,
+        tr(`TheoTown ${plotU}×${plotV} 底座`),
         'shape',
         createDefaultShape('theotown_base', { u: 0, v: 0, zPx: 0, sizeU: plotU, sizeV: plotV, heightPx: 0 }),
       );
@@ -387,7 +388,7 @@ export class App {
   }
 
   addShapeLayer(shape: ParametricShape, customName?: string): BuilderLayer {
-    const label = customName?.trim() || `${SHAPE_LABELS[shape.shapeType]} ${this.doc.layers.length + 1}`;
+    const label = customName?.trim() || `${tr(SHAPE_LABELS[shape.shapeType])} ${this.doc.layers.length + 1}`;
     this.pushHistory(`新建 ${label}`);
     const layer = new BuilderLayer(this.doc.width, this.doc.height, label, 'shape', cloneShape(shape));
     this.doc.rerenderShapeLayer(layer);

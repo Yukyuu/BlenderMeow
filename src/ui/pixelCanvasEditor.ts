@@ -1043,7 +1043,7 @@ export function openPixelCanvasEditor(opts: PixelCanvasEditorOptions): () => voi
   let checkerPattern: CanvasPattern | null = null;
 
   // ---- UI Elements ----
-  const defaultName = (opts.initialName ?? '').trim() || '自定义贴图';
+  const defaultName = (opts.initialName ?? '').trim() || tr('自定义贴图');
   const nameInput = h('input', {
     type: 'text',
     class: 'pxed-name-input',

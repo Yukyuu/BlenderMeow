@@ -1,6 +1,7 @@
 // PSD export / import via ag-psd (browser canvas compatible)
 import { readPsd, writePsd, type Psd, type Layer as PsdLayer, type BlendMode as PsdBlend } from 'ag-psd';
 import { BuilderDocument, BuilderLayer, type BlendMode } from './document';
+import { tr } from './i18n';
 import { GROUND_SHADOW_LAYER_NAME, INTER_BLOCK_SHADOW_LAYER_NAME } from './groundShadow';
 import type { ViewRotation } from './isoMath';
 
@@ -424,7 +425,7 @@ export function importPsdAsRasterLayers(buf: ArrayBuffer, targetDoc: BuilderDocu
   walk(psd.children, false);
   const out: BuilderLayer[] = [];
   if (flat.length === 0 && psd.canvas) {
-    const layer = new BuilderLayer(targetDoc.width, targetDoc.height, 'PSD 参考层', 'raster');
+    const layer = new BuilderLayer(targetDoc.width, targetDoc.height, tr('PSD 参考层'), 'raster');
     layer.rasterRole = 'underlay';
     layer.drawImage(psd.canvas, Math.floor((targetDoc.width - psd.width) / 2), targetDoc.height - psd.height);
     out.push(layer);
@@ -433,7 +434,7 @@ export function importPsdAsRasterLayers(buf: ArrayBuffer, targetDoc: BuilderDocu
   const dx = Math.floor((targetDoc.width - psd.width) / 2);
   const dy = targetDoc.height - psd.height;
   for (const pl of flat) {
-    const layer = new BuilderLayer(targetDoc.width, targetDoc.height, pl.name || 'PSD 图层', 'raster');
+    const layer = new BuilderLayer(targetDoc.width, targetDoc.height, pl.name || tr('PSD 图层'), 'raster');
     layer.rasterRole = 'underlay';
     if (pl.canvas) layer.drawImage(pl.canvas, dx + (pl.left ?? 0), dy + (pl.top ?? 0));
     layer.opacity = pl.opacity ?? 1;

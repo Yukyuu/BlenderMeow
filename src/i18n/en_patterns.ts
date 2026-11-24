@@ -8,7 +8,11 @@ export function registerInnerTranslator(fn: (s: string) => string) {
 }
 
 export const EN_PATTERNS: PatternRule[] = [
-  // App / Document / Project names
+  // App / Document / Project & auto-generated Layer names
+  [
+    /^(立方体 \/ 长方体|直角三棱柱|拱形 \/ 拱券|圆柱体|曲面柱 \/ 平放拱 \(控制面\)|多棱柱|楔形 \/ 坡屋顶|四棱锥|圆锥体|穹顶 \/ 球体|TheoTown 绿地底座) (\d+)$/,
+    (_, shape, n) => `${innerTr(shape)} ${n}`,
+  ],
   [/^等距建筑 (\d+)$/, (_, n) => `Iso Building ${n}`],
   [/^TheoTown (\d+)×(\d+) (?:绿地)?底座$/, (_, u, v) => `TheoTown ${u}×${v} Base`],
   [/^TheoTown (\d+)×(\d+) 底板模板$/, (_, a, b) => `TheoTown ${a}×${b} Base Template`],

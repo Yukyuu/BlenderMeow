@@ -6,6 +6,7 @@ import {
   normalizeColumnSections,
 } from './columnSections';
 import { parseColorCode, toHex8 } from './color';
+import { tr } from './i18n';
 import {
   DEFAULT_GROUND_SHADOW_COLOR,
   cloneGroundShadowConfig,
@@ -365,5 +366,5 @@ export async function deserializeBmeowProject(jsonText: string): Promise<{ doc: 
     doc.layers.push(layer);
   }
   doc.active = Math.max(0, Math.min(parsed.active ?? 0, Math.max(0, doc.layers.length - 1)));
-  return { doc, name: parsed.name || '未命名工程' };
+  return { doc, name: parsed.name || tr('未命名工程') };
 }

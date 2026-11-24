@@ -852,7 +852,7 @@ view.onCursor = (p) => {
 };
 
 function syncAllUi() {
-  docTitleEl.textContent = app.docName;
+  docTitleEl.textContent = tr(app.docName);
   plotPillEl.textContent = tr(`${app.doc.width}×${app.doc.height} · ${app.doc.plotU}×${app.doc.plotV}格`);
   rotBadge.textContent = `${app.doc.viewRotation * 90}°`;
   undoBtn.disabled = !app.history.canUndo;

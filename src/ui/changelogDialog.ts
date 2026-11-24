@@ -5,7 +5,7 @@ import { kvGet, kvSet } from '../platform';
 import { h, openSheet, toast } from './dom';
 
 declare const __APP_VERSION__: string | undefined;
-export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.5';
+export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.6';
 const LAST_SEEN_VERSION_KEY = 'blendermeow.lastSeenVersion';
 
 export interface ChangelogEntry {
@@ -16,6 +16,15 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.4.6',
+    date: '2026-11-24',
+    title: '完善英文模式下的新建图层与实体自动命名',
+    items: [
+      '修复英文界面下新建 3D 图形图层、复制图层、新建项目、默认绿地底座、导入参考图/PSD、曲面与柱体控制面以及自定义贴图时仍自动生成中文名称的问题，现已全面随当前语言自动命名。',
+      '同步支持旧工程中已生成的中文默认编号图层名与项目名在切换至英文界面后实时显示为对应英文名称（用户自定义名称不受影响）。',
+    ],
+  },
   {
     version: '1.4.5',
     date: '2026-11-24',

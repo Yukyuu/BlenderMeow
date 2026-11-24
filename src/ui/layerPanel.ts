@@ -1,6 +1,7 @@
 // Layer panel for managing 3D shape layers & reference raster layers (with depth auto-sort & drag reordering)
 import type { App } from '../app';
 import { clamp, toHex8 } from '../core/color';
+import { tr } from '../core/i18n';
 import { BLEND_MODES, type BlendMode, type BuilderLayer } from '../core/document';
 import {
   DEFAULT_GROUND_SHADOW_COLOR,
@@ -88,7 +89,7 @@ export class LayerPanel {
           if (!f) return;
           try {
             const img = await loadImage(f);
-            this.app.addRasterLayer(img, f.name.replace(/\.[^.]+$/, '') || '参考图', 'underlay');
+            this.app.addRasterLayer(img, f.name.replace(/\.[^.]+$/, '') || tr('参考图'), 'underlay');
             toast(`🖼️ 已导入参考图「${f.name}」`);
           } catch (e) {
             toast('导入参考图失败: ' + (e as Error).message);
@@ -108,7 +109,7 @@ export class LayerPanel {
                 try {
                   const img = await loadTemplateImage(tpl.url);
                   close();
-                  this.app.addRasterLayer(img, tpl.name, 'underlay');
+                  this.app.addRasterLayer(img, tr(tpl.name), 'underlay');
                   toast(`🧩 已垫底导入 ${tpl.name}`);
                 } catch (e) {
                   toast((e as Error).message);
@@ -399,7 +400,7 @@ export class LayerPanel {
           },
           ondblclick: async (e: MouseEvent) => {
             e.stopPropagation();
-            const n = await prompt2('重命名图层', l.name);
+            const n = await prompt2('重命名图层', tr(l.name));
             if (n !== null && n.trim()) {
               this.app.pushHistory('重命名图层');
               l.name = n.trim();

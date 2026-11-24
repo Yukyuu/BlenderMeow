@@ -2,6 +2,7 @@
 // arbitrary parallelogram unwrapping, built-in TheoTown pixel textures, and planar UV sampling.
 
 import { clamp, type RGBA } from './color';
+import { tr } from './i18n';
 import { normalizeRotation } from './isoMath';
 import type { ParametricShape, ShapeKind } from './isoRenderer';
 
@@ -856,7 +857,7 @@ export function hydratePersistedTextureGroups(groups: TextureGroup[]): void {
     const order = Number.isFinite(raw.order) ? Math.max(2, raw.order) : nextCustomGroupOrder();
     const clean: TextureGroup = {
       id,
-      name: (typeof raw.name === 'string' ? raw.name.trim() : '') || '新建分组',
+      name: (typeof raw.name === 'string' ? raw.name.trim() : '') || tr('新建分组'),
       order,
     };
     customGroups.set(id, clean);
@@ -878,7 +879,7 @@ export function registerSerializedTextureGroups(groups: TextureGroup[] | undefin
     const order = Number.isFinite(raw.order) ? Math.max(2, raw.order) : nextCustomGroupOrder();
     customGroups.set(id, {
       id,
-      name: (typeof raw.name === 'string' ? raw.name.trim() : '') || '新建分组',
+      name: (typeof raw.name === 'string' ? raw.name.trim() : '') || tr('新建分组'),
       order,
     });
     added++;
@@ -897,7 +898,7 @@ export function createTextureGroup(name: string): TextureGroup {
   } while (customGroups.has(id));
   const group: TextureGroup = {
     id,
-    name: (name ?? '').trim() || '新建分组',
+    name: (name ?? '').trim() || tr('新建分组'),
     order: nextCustomGroupOrder(),
   };
   customGroups.set(id, group);
@@ -1015,7 +1016,7 @@ export function makeTextureAssetFromRgba(opts: {
   const faceBakedTag = opts.faceBakedTag?.trim() || undefined;
   return {
     id: opts.id?.trim() || nextTextureAssetId(),
-    name: opts.name.trim() || '自定义贴图',
+    name: opts.name.trim() || tr('自定义贴图'),
     builtIn: opts.builtIn,
     projectScoped: opts.projectScoped,
     ...(groupId ? { groupId } : {}),
@@ -1086,7 +1087,7 @@ export async function deserializeTextureAsset(raw: SerializedTextureAsset): Prom
 
   return {
     id: raw.id,
-    name: raw.name || '导入贴图',
+    name: raw.name || tr('导入贴图'),
     ...(groupId ? { groupId } : {}),
     ...(faceBakedTag ? { faceBakedTag } : {}),
     width: w,
@@ -1861,7 +1862,7 @@ export function applyEditedFaceBufferToShape(opts: {
       : DEFAULT_USER_GROUP_ID;
 
   const asset = makeTextureAssetFromRgba({
-    name: opts.assetName?.trim() || `${opts.faceSpec.shortLabel || opts.faceSpec.label} 贴图`,
+    name: opts.assetName?.trim() || tr(`${opts.faceSpec.shortLabel || opts.faceSpec.label} 贴图`),
     width: w,
     height: h,
     rectData: buf,
