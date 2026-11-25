@@ -36,6 +36,8 @@ export interface PinnedRulerAnnotation {
   pts: RulerPoint3D[];
 }
 
+export const DEFAULT_ISO_GRID_COLOR: RGBA = { r: 168, g: 85, b: 247, a: 61 };
+
 export interface Settings {
   language: LanguageSetting;
   uiTheme: ThemeId;
@@ -43,6 +45,8 @@ export interface Settings {
   uiCustomAccent: RGBA;
   uiCustomStage: RGBA;
   showIsoGrid: boolean;
+  isoGridColor: RGBA;
+  showGroundProjection: boolean;
   snapEnabled: boolean;
   snapStep: GridSnapStep;
   showPixelGrid: boolean;
@@ -143,6 +147,8 @@ export class App {
       uiCustomAccent: { r: 168, g: 85, b: 247, a: 255 },
       uiCustomStage: { r: 34, g: 27, b: 51, a: 255 },
       showIsoGrid: true,
+      isoGridColor: { ...DEFAULT_ISO_GRID_COLOR },
+      showGroundProjection: true,
       snapEnabled: true,
       snapStep: 1,
       showPixelGrid: true,
@@ -173,6 +179,21 @@ export class App {
           : 'auto';
       merged.shadeSteps = normalizeShadeSteps(merged.shadeSteps);
       merged.dockedTextureLibrary = Boolean(merged.dockedTextureLibrary);
+      merged.showGroundProjection = parsed.showGroundProjection !== undefined ? Boolean(parsed.showGroundProjection) : true;
+      const rawGrid = parsed.isoGridColor;
+      merged.isoGridColor =
+        rawGrid &&
+        typeof rawGrid === 'object' &&
+        Number.isFinite(rawGrid.r) &&
+        Number.isFinite(rawGrid.g) &&
+        Number.isFinite(rawGrid.b)
+          ? {
+              r: clamp(Math.round(rawGrid.r), 0, 255),
+              g: clamp(Math.round(rawGrid.g), 0, 255),
+              b: clamp(Math.round(rawGrid.b), 0, 255),
+              a: clamp(Math.round(Number.isFinite(rawGrid.a) ? rawGrid.a : DEFAULT_ISO_GRID_COLOR.a), 0, 255),
+            }
+          : { ...DEFAULT_ISO_GRID_COLOR };
       if (!parsed.uiTheme) {
         merged.uiTheme = 'dark';
       }
@@ -340,7 +361,7 @@ export class App {
       outlineMode: prev.outlineMode,
       outlineColor: prev.outlineColor ? { ...prev.outlineColor } : null,
       edgeHighlight: prev.edgeHighlight,
-      heightPx: kind === 'theotown_base' ? 0 : Math.max(6, prev.heightPx || 24),
+      heightPx: kind === 'theotown_base' ? 0 : kind === 'sphere' ? 18 : Math.max(6, prev.heightPx || 24),
       pattern: { ...prev.pattern, primaryColor: { ...prev.pattern.primaryColor } },
     });
     this.emit('preset');

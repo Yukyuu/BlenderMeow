@@ -46,6 +46,7 @@ import { openLoftCurveModal } from './ui/loftEditor';
 import { openTextureLibraryModal, TextureLibraryDockPanel } from './ui/textureLibraryUI';
 import { makeHost, View } from './view';
 import {
+  ArrowDownToLine,
   ArrowDownWideNarrow,
   Box,
   CircleDot,
@@ -53,6 +54,7 @@ import {
   Cone,
   Cylinder,
   FolderOpen,
+  Globe,
   Grid3x3,
   Hand,
   Hexagon,
@@ -375,6 +377,20 @@ const gridToggleBtn = h('button', {
   },
 }, icon(Grid3x3, 18));
 
+const groundProjToggleBtn = h('button', {
+  class: 'icon-btn',
+  title: '显隐离地选中图形的地面投影位置',
+  onclick: () => {
+    app.settings.showGroundProjection = !app.settings.showGroundProjection;
+    app.saveSettings();
+    toast(
+      app.settings.showGroundProjection
+        ? '📍 已开启地面投影（选中离地 Z > 0 的图形时自动显示其地面投影位置）'
+        : '已关闭地面投影',
+    );
+  },
+}, icon(ArrowDownToLine, 18));
+
 const snapToggleBtn = h('button', {
   class: 'icon-btn',
   title: '开启/关闭 32×16 网格吸附',
@@ -495,6 +511,7 @@ const topbar = h(
     rotRightBtn,
     h('span', { class: 'top-sep' }),
     gridToggleBtn,
+    groundProjToggleBtn,
     snapToggleBtn,
     snapStepSel,
     sortDepthBtn,
@@ -530,7 +547,8 @@ const shapeDefs: { id: ShapeKind; ic: IconNode; short: string }[] = [
   { id: 'wedge', ic: TriangleRight, short: '坡屋顶' },
   { id: 'pyramid', ic: Pyramid, short: '四棱锥' },
   { id: 'cone', ic: Cone, short: '圆锥体' },
-  { id: 'dome', ic: CircleDot, short: '穹顶球' },
+  { id: 'dome', ic: CircleDot, short: '穹顶' },
+  { id: 'sphere', ic: Globe, short: '球体' },
   { id: 'theotown_base', ic: Grid3x3, short: '绿底座' },
 ];
 
@@ -624,6 +642,10 @@ function refreshToolStrip() {
         app.settings.autoStackSnap = v;
         app.saveSettings();
       }),
+      toggle('📍 地面投影', app.settings.showGroundProjection, (v) => {
+        app.settings.showGroundProjection = v;
+        app.saveSettings();
+      }),
     );
 
     const active = app.doc.layer;
@@ -644,6 +666,21 @@ function refreshToolStrip() {
             toast(`已叠放至 Z = ${tz}px`);
           },
         }, '🧱 叠放到下方顶面'),
+        h('button', {
+          class: `btn small${active.shape.flipZ ? ' primary' : ''}`,
+          title: '将当前选中图形上下翻转（倒置）',
+          onclick: () => {
+            const s = active.shape!;
+            const nextFlip = !s.flipZ;
+            app.pushHistory(nextFlip ? '上下翻转图形' : '恢复图形正向');
+            if (nextFlip) s.flipZ = true;
+            else delete s.flipZ;
+            app.doc.rerenderShapeLayer(active);
+            app.emit('doc');
+            app.emit('layers');
+            toast(nextFlip ? '↕ 已将当前图形上下翻转' : '↕ 已恢复图形正向');
+          },
+        }, '↕ 上下翻转'),
       );
       const activeId = active.id;
       const makeModalMutateOpts = () => ({
@@ -858,6 +895,7 @@ function syncAllUi() {
   undoBtn.disabled = !app.history.canUndo;
   redoBtn.disabled = !app.history.canRedo;
   gridToggleBtn.classList.toggle('on', app.settings.showIsoGrid);
+  groundProjToggleBtn.classList.toggle('on', app.settings.showGroundProjection);
   snapToggleBtn.classList.toggle('on', app.settings.snapEnabled);
   snapStepSel.value = String(app.settings.snapStep);
 
@@ -881,6 +919,10 @@ app.on((what) => {
   if (what === 'history') {
     undoBtn.disabled = !app.history.canUndo;
     redoBtn.disabled = !app.history.canRedo;
+    return;
+  }
+  if (what === 'view') {
+    view.requestRender();
     return;
   }
   if (what === 'doc_live') {
@@ -907,6 +949,7 @@ function syncShortcutTooltips() {
   rotLeftBtn.title = `${tr('逆时针旋转 90° 查看另一视角')}${formatActionHint('view.rotateLeft')}`;
   rotRightBtn.title = `${tr('顺时针旋转 90° 查看另一视角')}${formatActionHint('view.rotateRight')}`;
   gridToggleBtn.title = `${tr('显隐 32×16 菱形网格')}${formatActionHint('view.toggleGrid')}`;
+  groundProjToggleBtn.title = `${tr('显隐离地选中图形的地面投影位置')}${formatActionHint('view.toggleGroundProjection')}`;
   snapToggleBtn.title = `${tr('开启/关闭 32×16 网格吸附')}${formatActionHint('view.toggleSnap')}`;
   sortDepthBtn.title = `${tr('按当前视角前后遮挡深度自动排列图层')}${formatActionHint('view.sortDepth')}`;
   fitBtn.title = `${tr('适应画布视野')}${formatActionHint('view.fit')}`;
@@ -1015,6 +1058,15 @@ shortcutManager.onTrigger('edit.deleteLayer', () => {
 shortcutManager.onTrigger('view.toggleGrid', () => {
   app.settings.showIsoGrid = !app.settings.showIsoGrid;
   app.saveSettings();
+});
+shortcutManager.onTrigger('view.toggleGroundProjection', () => {
+  app.settings.showGroundProjection = !app.settings.showGroundProjection;
+  app.saveSettings();
+  toast(
+    app.settings.showGroundProjection
+      ? '📍 已开启地面投影（选中离地 Z > 0 的图形时自动显示其地面投影位置）'
+      : '已关闭地面投影',
+  );
 });
 shortcutManager.onTrigger('view.toggleSnap', () => {
   app.settings.snapEnabled = !app.settings.snapEnabled;

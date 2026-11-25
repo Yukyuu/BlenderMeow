@@ -280,6 +280,11 @@ export async function deserializeBmeowProject(jsonText: string): Promise<{ doc: 
   for (const sl of parsed.layers) {
     if (sl.shape) {
       if (!sl.shape.triPrismCut) sl.shape.triPrismCut = 'vertical';
+      if (sl.shape.flipZ && sl.shape.shapeType !== 'theotown_base') {
+        sl.shape.flipZ = true;
+      } else {
+        delete sl.shape.flipZ;
+      }
       sl.shape.shadeContrast = clampShadeContrast(sl.shape.shadeContrast);
       if (sl.shape.shapeType === 'loft') {
         sl.shape.loftSections = normalizeLoftSections(sl.shape.loftSections);

@@ -1326,7 +1326,7 @@ export function getLocalDimsFromShape(
 }
 
 export function getPlanarFacesForShape(
-  s: Pick<ParametricShape, 'shapeType' | 'sizeU' | 'sizeV' | 'heightPx' | 'ori' | 'prismSides' | 'triPrismCut' | 'wedgeMode'>,
+  s: Pick<ParametricShape, 'shapeType' | 'sizeU' | 'sizeV' | 'heightPx' | 'ori' | 'flipZ' | 'prismSides' | 'triPrismCut' | 'wedgeMode'>,
 ): PlanarFaceSpec[] {
   const { lsu, lsv } = getLocalDimsFromShape(s);
   const wU = Math.max(4, Math.round(lsu * 16));
@@ -1411,9 +1411,13 @@ export function getPlanarFacesForShape(
     }
 
     case 'wedge': {
+      const flippedTopFace: PlanarFaceSpec[] = s.flipZ
+        ? [{ id: 'top', label: '顶面 (+Z)', shortLabel: '顶面 (+Z)', faceW: wU, faceH: wV, isTop: true, defaultIsoMode: 'iso_diamond' }]
+        : [];
       if (s.wedgeMode === 'gable') {
         const slopeLenPx = Math.max(4, Math.round(Math.hypot(lsv * 8, s.heightPx)));
         return [
+          ...flippedTopFace,
           { id: 'slope_pv', label: '前左屋坡 (+V)', shortLabel: '前坡 (+V)', faceW: wU, faceH: slopeLenPx, isTop: false, defaultIsoMode: 'wall_down_right' },
           { id: 'slope_nv', label: '后右屋坡 (-V)', shortLabel: '后坡 (-V)', faceW: wU, faceH: slopeLenPx, isTop: false, defaultIsoMode: 'wall_down_right' },
           {
@@ -1440,6 +1444,7 @@ export function getPlanarFacesForShape(
       }
       const slopeLenPx = Math.max(4, Math.round(Math.hypot(lsu * 16, s.heightPx)));
       return [
+        ...flippedTopFace,
         { id: 'slope_main', label: '单坡屋面', shortLabel: '单坡斜面', faceW: wV, faceH: slopeLenPx, isTop: false, defaultIsoMode: 'wall_up_right' },
         { id: 'wall_back', label: '直立高墙 (+U)', shortLabel: '高墙 (+U)', faceW: wV, faceH: wallH, isTop: false, defaultIsoMode: 'wall_up_right' },
         {
@@ -1468,7 +1473,11 @@ export function getPlanarFacesForShape(
     case 'pyramid': {
       const slantU = Math.max(4, Math.round(Math.hypot(lsu * 8, s.heightPx)));
       const slantV = Math.max(4, Math.round(Math.hypot(lsv * 8, s.heightPx)));
+      const flippedTopFace: PlanarFaceSpec[] = s.flipZ
+        ? [{ id: 'top', label: '顶面 (+Z)', shortLabel: '顶面 (+Z)', faceW: wU, faceH: wV, isTop: true, defaultIsoMode: 'iso_diamond' }]
+        : [];
       return [
+        ...flippedTopFace,
         { id: 'pyr_pv', label: '前左斜面 (+V)', shortLabel: '前左面', faceW: wU, faceH: slantV, isTop: false, defaultIsoMode: 'wall_down_right', clipPolyUV: [[0, 1], [1, 1], [0.5, 0]] },
         { id: 'pyr_pu', label: '前右斜面 (+U)', shortLabel: '前右面', faceW: wV, faceH: slantU, isTop: false, defaultIsoMode: 'wall_up_right', clipPolyUV: [[0, 1], [1, 1], [0.5, 0]] },
         { id: 'pyr_nv', label: '后右斜面 (-V)', shortLabel: '后右面', faceW: wU, faceH: slantV, isTop: false, defaultIsoMode: 'wall_down_right', clipPolyUV: [[0, 1], [1, 1], [0.5, 0]] },

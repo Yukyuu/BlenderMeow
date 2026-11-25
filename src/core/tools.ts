@@ -202,7 +202,7 @@ export class SelectGizmoTool implements Tool {
     const secs = normalizeLoftSections(s.loftSections);
     const shiftX = 10 / Math.max(1, this.host.scale() * 0.25);
     return secs.map((sec) => {
-      const zSec = s.zPx + sec.t * s.heightPx;
+      const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
       const anchor = isoToScreenPx(vb.u, vb.v + vb.sizeV, zSec, originX, originY);
       return {
         id: sec.id,
@@ -222,7 +222,7 @@ export class SelectGizmoTool implements Tool {
     const secs = normalizeColumnSections(s.colSections, s.shapeType, s.prismSides);
     const shiftX = 10 / Math.max(1, this.host.scale() * 0.25);
     return secs.map((sec) => {
-      const zSec = s.zPx + sec.t * s.heightPx;
+      const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
       const anchor = isoToScreenPx(vb.u, vb.v + vb.sizeV, zSec, originX, originY);
       return {
         id: sec.id,
@@ -349,7 +349,8 @@ export class SelectGizmoTool implements Tool {
       const targetSec = s.loftSections?.find((sec) => sec.id === secId);
       if (origSec && targetSec && this.origShape.heightPx > 0) {
         const dy = p.y - this.dragStart[1];
-        targetSec.t = clamp(Math.round((origSec.t - dy / this.origShape.heightPx) * 100) / 100, 0, 1);
+        const deltaT = s.flipZ ? dy / this.origShape.heightPx : -dy / this.origShape.heightPx;
+        targetSec.t = clamp(Math.round((origSec.t + deltaT) * 100) / 100, 0, 1);
         s.activeLoftSectionId = secId;
         const ori = normalizeRotation(s.ori);
         const lsu = ori % 2 === 1 ? s.sizeV : s.sizeU;
@@ -362,7 +363,8 @@ export class SelectGizmoTool implements Tool {
       const targetSec = s.colSections?.find((sec) => sec.id === secId);
       if (origSec && targetSec && this.origShape.heightPx > 0) {
         const dy = p.y - this.dragStart[1];
-        targetSec.t = clamp(Math.round((origSec.t - dy / this.origShape.heightPx) * 100) / 100, 0, 1);
+        const deltaT = s.flipZ ? dy / this.origShape.heightPx : -dy / this.origShape.heightPx;
+        targetSec.t = clamp(Math.round((origSec.t + deltaT) * 100) / 100, 0, 1);
         s.activeColSectionId = secId;
         syncColumnTransitionSections(s);
       }
@@ -562,7 +564,7 @@ export class SelectGizmoTool implements Tool {
 
       for (const sec of secs) {
         const isAct = sec.id === activeId;
-        const zSec = s.zPx + sec.t * s.heightPx;
+        const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
         const pts = sampleClosedSectionUniform(sec, 48, true);
         if (pts.length >= 3) {
           ctx.beginPath();
@@ -629,7 +631,7 @@ export class SelectGizmoTool implements Tool {
 
       for (const sec of secs) {
         const isAct = sec.id === activeId;
-        const zSec = s.zPx + sec.t * s.heightPx;
+        const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
         const pts = evaluateColumnSectionRing(sec, 32);
         if (pts.length >= 3) {
           ctx.beginPath();
@@ -713,7 +715,8 @@ export class SelectGizmoTool implements Tool {
         ctx.beginPath();
         for (let i = 0; i < cs.poly.length; i++) {
           const [ps, ph] = cs.poly[i];
-          const pt3 = transformLocalToViewPoint(ps, lv, z0 + ph * heightPx, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+          const hUse = s.flipZ ? 1 - ph : ph;
+          const pt3 = transformLocalToViewPoint(ps, lv, z0 + hUse * heightPx, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
           const iso = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
           const sc = toScreen(iso[0], iso[1]);
           if (i === 0) ctx.moveTo(sc[0], sc[1]);

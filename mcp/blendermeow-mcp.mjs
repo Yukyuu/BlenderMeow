@@ -266,7 +266,7 @@ const TOOLS = [
   {
     name: 'studio_upsert_shape',
     description:
-      '[#M5] Create or update a 3D parametric shape layer (mode: auto|create|update). Shapes: box, right_tri_prism, arch, cylinder, loft, prism, wedge, pyramid, cone, dome, theotown_base. Supports cells/zPx or meters (1 cell=9.6m, 3px=1.6m), stackOnBelow, archPreset/loftPreset, shading/outline, and pattern.',
+      '[#M5] Create or update a 3D parametric shape layer (mode: auto|create|update). Shapes: box, right_tri_prism, arch, cylinder, loft, prism, wedge, pyramid, cone, dome, sphere, theotown_base. Supports cells/zPx or meters (1 cell=9.6m, 3px=1.6m), flipZ (vertical flip), stackOnBelow, archPreset/loftPreset, shading/outline, and pattern.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -276,7 +276,7 @@ const TOOLS = [
         name: { type: 'string' },
         shapeType: {
           type: 'string',
-          enum: ['box', 'right_tri_prism', 'arch', 'cylinder', 'loft', 'prism', 'wedge', 'pyramid', 'cone', 'dome', 'theotown_base'],
+          enum: ['box', 'right_tri_prism', 'arch', 'cylinder', 'loft', 'prism', 'wedge', 'pyramid', 'cone', 'dome', 'sphere', 'theotown_base'],
         },
         u: { type: 'number' },
         v: { type: 'number' },
@@ -292,6 +292,7 @@ const TOOLS = [
         heightMeters: { type: 'number' },
         stackOnBelow: { type: 'boolean' },
         ori: { type: 'number' },
+        flipZ: { type: 'boolean', description: 'Vertically flip shape upside-down within its [zPx, zPx + heightPx] span.' },
         prismSides: { type: 'number' },
         triPrismCut: { type: 'string' },
         wedgeMode: { type: 'string' },

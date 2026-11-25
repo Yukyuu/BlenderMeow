@@ -2,6 +2,7 @@
 export const APP_AUTHOR = 'yukyuu';
 export const APP_LICENSE_NAME = 'MIT License';
 export const PIXEL_MEOW_ONLINE_URL = 'https://pixelmeow.9rm.uk/';
+export const ANDROID_RELEASES_URL = 'https://github.com/Yukyuu/BlenderMeow/releases/';
 
 export const MIT_LICENSE_TEXT = `MIT License
 

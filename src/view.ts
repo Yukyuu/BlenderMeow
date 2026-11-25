@@ -1,7 +1,22 @@
-// Interactive viewport: nearest-neighbour composite rendering, 32x16 isometric diamond grid, plot orientation markers, pinch/pan/undo gestures
+// Interactive viewport: nearest-neighbour composite rendering, 32x16 isometric diamond grid, plot orientation markers, ground projection, pinch/pan/undo gestures
 import type { App } from './app';
-import { isoToScreenPx, screenPxToIsoAtZ, worldBoxToView, worldPointToView } from './core/isoMath';
-import type { Pt, Tool, ToolHost } from './core/tools';
+import { clamp } from './core/color';
+import {
+  evaluateColumnSectionRing,
+  hasActiveColumnSections,
+  normalizeColumnSections,
+} from './core/columnSections';
+import {
+  isoToScreenPx,
+  normalizeRotation,
+  screenPxToIsoAtZ,
+  worldBoxToView,
+  worldPointToView,
+  zPxToMeters,
+} from './core/isoMath';
+import { transformLocalToViewPoint } from './core/isoRenderer';
+import { normalizeLoftSections, sampleClosedSectionUniform } from './core/loft';
+import { drawBadge, type Pt, type Tool, type ToolHost } from './core/tools';
 
 export class View {
   canvas: HTMLCanvasElement;
@@ -190,6 +205,11 @@ export class View {
     // Plot orientation frame & compass markers (hideable & adjustable)
     this.drawPlotFrameAndCompass(ctx);
 
+    // Selected elevated shape ground projection overlay (Z = 0 footprint + plumb lines)
+    if (this.app.settings.showGroundProjection) {
+      this.drawGroundProjection(ctx);
+    }
+
     // Pinned 3D ruler overlays & active tool overlay (3D Gizmos / Ruler / Drag preview)
     this.onPinnedOverlay?.(ctx, this.toScreen);
     this.getTool().overlay?.(ctx, this.toScreen);
@@ -200,6 +220,12 @@ export class View {
     const { originX, originY } = d.getViewOrigin();
     const dw = w * z;
     const dh = h * z;
+    const gc = this.app.settings.isoGridColor;
+    const mainAlpha = clamp((gc?.a ?? 61) / 255, 0, 1);
+    const subAlpha = clamp(mainAlpha * 0.58, 0, 1);
+    const gr = clamp(Math.round(gc?.r ?? 168), 0, 255);
+    const gg = clamp(Math.round(gc?.g ?? 85), 0, 255);
+    const gb = clamp(Math.round(gc?.b ?? 247), 0, 255);
 
     ctx.save();
     ctx.beginPath();
@@ -212,8 +238,8 @@ export class View {
       ? Math.max(0.25, this.app.settings.snapStep)
       : 1;
 
-    if (subStep < 1 && z >= 2) {
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.14)';
+    if (subStep < 1 && z >= 2 && subAlpha > 0) {
+      ctx.strokeStyle = `rgba(${gr}, ${gg}, ${gb}, ${subAlpha.toFixed(3)})`;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let u = -span; u <= span; u += subStep) {
@@ -238,26 +264,250 @@ export class View {
     }
 
     // Main 32x16 cells across canvas
-    ctx.strokeStyle = 'rgba(168, 85, 247, 0.24)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let u = -span; u <= span; u++) {
-      const [ax, ay] = isoToScreenPx(u, -span, 0, originX, originY);
-      const [bx, by] = isoToScreenPx(u, span, 0, originX, originY);
-      const [sax, say] = this.toScreen(ax, ay);
-      const [sbx, sby] = this.toScreen(bx, by);
-      ctx.moveTo(sax, say);
-      ctx.lineTo(sbx, sby);
+    if (mainAlpha > 0) {
+      ctx.strokeStyle = `rgba(${gr}, ${gg}, ${gb}, ${mainAlpha.toFixed(3)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let u = -span; u <= span; u++) {
+        const [ax, ay] = isoToScreenPx(u, -span, 0, originX, originY);
+        const [bx, by] = isoToScreenPx(u, span, 0, originX, originY);
+        const [sax, say] = this.toScreen(ax, ay);
+        const [sbx, sby] = this.toScreen(bx, by);
+        ctx.moveTo(sax, say);
+        ctx.lineTo(sbx, sby);
+      }
+      for (let v = -span; v <= span; v++) {
+        const [ax, ay] = isoToScreenPx(-span, v, 0, originX, originY);
+        const [bx, by] = isoToScreenPx(span, v, 0, originX, originY);
+        const [sax, say] = this.toScreen(ax, ay);
+        const [sbx, sby] = this.toScreen(bx, by);
+        ctx.moveTo(sax, say);
+        ctx.lineTo(sbx, sby);
+      }
+      ctx.stroke();
     }
-    for (let v = -span; v <= span; v++) {
-      const [ax, ay] = isoToScreenPx(-span, v, 0, originX, originY);
-      const [bx, by] = isoToScreenPx(span, v, 0, originX, originY);
-      const [sax, say] = this.toScreen(ax, ay);
-      const [sbx, sby] = this.toScreen(bx, by);
-      ctx.moveTo(sax, say);
-      ctx.lineTo(sbx, sby);
+
+    ctx.restore();
+  }
+
+  private drawGroundProjection(ctx: CanvasRenderingContext2D) {
+    const d = this.app.doc;
+    const l = d.layer;
+    if (!l || !l.visible || l.kind !== 'shape' || !l.shape) return;
+    const s = l.shape;
+    if (s.shapeType === 'theotown_base' || s.zPx <= 0) return;
+
+    const { originX, originY } = d.getViewOrigin();
+    const vb = worldBoxToView(
+      s.u,
+      s.v,
+      Math.max(0.0625, s.sizeU),
+      Math.max(0.0625, s.sizeV),
+      normalizeRotation(s.ori),
+      d.plotU,
+      d.plotV,
+      d.viewRotation,
+    );
+    const u0 = vb.u;
+    const v0 = vb.v;
+    const su = vb.sizeU;
+    const sv = vb.sizeV;
+    const ori = vb.ori;
+    const z0 = Math.round(s.zPx);
+    const toViewScreen = (vu: number, vv: number, z: number): [number, number] =>
+      this.toScreen(...isoToScreenPx(vu, vv, z, originX, originY));
+    const localToView = (lu: number, lv: number): [number, number] => {
+      const pt = transformLocalToViewPoint(lu, lv, 0, u0, v0, su, sv, ori);
+      return [pt.x, pt.y];
+    };
+
+    const primaryPoly: [number, number][] = [];
+    let secondaryPoly: [number, number][] | null = null;
+    const dropAnchors: [number, number][] = [];
+
+    if (s.shapeType === 'loft') {
+      const secs = normalizeLoftSections(s.loftSections);
+      const botSec = s.flipZ ? secs[secs.length - 1] : secs[0];
+      const topSec = s.flipZ ? secs[0] : secs[secs.length - 1];
+      const botPts = sampleClosedSectionUniform(botSec, 48, true);
+      for (const [lu, lv] of botPts) primaryPoly.push(localToView(lu, lv));
+      if (topSec && topSec.id !== botSec.id) {
+        secondaryPoly = sampleClosedSectionUniform(topSec, 48, true).map(([lu, lv]) => localToView(lu, lv));
+      }
+      for (let i = 0; i < 4; i++) {
+        const idx = Math.floor((i * primaryPoly.length) / 4);
+        if (primaryPoly[idx]) dropAnchors.push(primaryPoly[idx]);
+      }
+    } else if (hasActiveColumnSections(s)) {
+      const secs = normalizeColumnSections(s.colSections, s.shapeType, s.prismSides);
+      const botSec = s.flipZ ? secs[secs.length - 1] : secs[0];
+      const topSec = s.flipZ ? secs[0] : secs[secs.length - 1];
+      const botPts = evaluateColumnSectionRing(botSec, 36);
+      for (const [lu, lv] of botPts) primaryPoly.push(localToView(lu, lv));
+      if (topSec && topSec.id !== botSec.id) {
+        secondaryPoly = evaluateColumnSectionRing(topSec, 36).map(([lu, lv]) => localToView(lu, lv));
+      }
+      const step = Math.max(1, Math.floor(primaryPoly.length / Math.min(4, primaryPoly.length)));
+      for (let i = 0; i < primaryPoly.length && dropAnchors.length < 4; i += step) {
+        dropAnchors.push(primaryPoly[i]);
+      }
+    } else if (
+      s.shapeType === 'cylinder' ||
+      s.shapeType === 'cone' ||
+      s.shapeType === 'dome' ||
+      s.shapeType === 'sphere'
+    ) {
+      const cu = u0 + su * 0.5;
+      const cv = v0 + sv * 0.5;
+      const ru = su * 0.5;
+      const rv = sv * 0.5;
+      const segs = 48;
+      for (let i = 0; i < segs; i++) {
+        const ang = (i * Math.PI * 2) / segs;
+        primaryPoly.push([cu + Math.cos(ang) * ru, cv + Math.sin(ang) * rv]);
+      }
+      dropAnchors.push([cu + ru, cv], [cu, cv + rv], [cu - ru, cv], [cu, cv - rv]);
+    } else if (s.shapeType === 'prism') {
+      const n = Math.max(3, Math.min(12, Math.round(s.prismSides)));
+      const startAngle = Math.PI / n;
+      for (let i = 0; i < n; i++) {
+        const ang = startAngle - (i * Math.PI * 2) / n;
+        primaryPoly.push(localToView(0.5 + Math.cos(ang) * 0.5, 0.5 + Math.sin(ang) * 0.5));
+      }
+      const step = Math.max(1, Math.floor(n / Math.min(6, n)));
+      for (let i = 0; i < n; i += step) dropAnchors.push(primaryPoly[i]);
+    } else if (s.shapeType === 'right_tri_prism' && (s.triPrismCut ?? 'vertical') === 'vertical') {
+      const pts: [number, number][] = [localToView(0, 0), localToView(1, 0), localToView(0, 1)];
+      primaryPoly.push(...pts);
+      dropAnchors.push(...pts);
+    } else {
+      const boxPts: [number, number][] = [
+        [u0, v0],
+        [u0 + su, v0],
+        [u0 + su, v0 + sv],
+        [u0, v0 + sv],
+      ];
+      primaryPoly.push(...boxPts);
+      dropAnchors.push(...boxPts);
+    }
+
+    if (primaryPoly.length < 3) return;
+
+    const traceViewPolyAtZ0 = (poly: [number, number][]) => {
+      ctx.beginPath();
+      for (let i = 0; i < poly.length; i++) {
+        const [sx, sy] = toViewScreen(poly[i][0], poly[i][1], 0);
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+    };
+
+    ctx.save();
+
+    // Optional faint outer bounding diamond for round / loft shapes to aid 32x16 cell alignment
+    if (
+      s.shapeType === 'cylinder' ||
+      s.shapeType === 'cone' ||
+      s.shapeType === 'dome' ||
+      s.shapeType === 'sphere'
+    ) {
+      traceViewPolyAtZ0([
+        [u0, v0],
+        [u0 + su, v0],
+        [u0 + su, v0 + sv],
+        [u0, v0 + sv],
+      ]);
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.34)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+    }
+
+    // Secondary overhanging ring contour (e.g. wider top on loft/column)
+    if (secondaryPoly && secondaryPoly.length >= 3) {
+      traceViewPolyAtZ0(secondaryPoly);
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.45)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+    }
+
+    // Primary projected footprint fill & crisp outline at Z = 0
+    traceViewPolyAtZ0(primaryPoly);
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.20)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.95)';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([5, 3]);
+    ctx.stroke();
+
+    // Vertical drop guide lines from Z = z0 down to Z = 0
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.72)';
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    for (const [au, av] of dropAnchors) {
+      const [topX, topY] = toViewScreen(au, av, z0);
+      const [botX, botY] = toViewScreen(au, av, 0);
+      ctx.moveTo(topX, topY);
+      ctx.lineTo(botX, botY);
     }
     ctx.stroke();
+
+    // Ground anchor dots at each vertical drop landing point
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#34d399';
+    for (const [au, av] of dropAnchors) {
+      const [botX, botY] = toViewScreen(au, av, 0);
+      ctx.beginPath();
+      ctx.arc(botX, botY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Center plumb line + ground target crosshair at (cu, cv, 0)
+    const cu = u0 + su * 0.5;
+    const cv = v0 + sv * 0.5;
+    const [cTopX, cTopY] = toViewScreen(cu, cv, z0);
+    const [cBotX, cBotY] = toViewScreen(cu, cv, 0);
+    ctx.strokeStyle = 'rgba(110, 231, 183, 0.85)';
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cTopX, cTopY);
+    ctx.lineTo(cBotX, cBotY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = '#6ee7b7';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cBotX - 5, cBotY);
+    ctx.lineTo(cBotX + 5, cBotY);
+    ctx.moveTo(cBotX, cBotY - 5);
+    ctx.lineTo(cBotX, cBotY + 5);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cBotX, cBotY, 3.5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Ground projection coordinate & elevation badge
+    const fmt = (n: number) => Math.round(n * 100) / 100;
+    let maxScreenY = cBotY;
+    for (const [pu, pv] of primaryPoly) {
+      const [, sy] = toViewScreen(pu, pv, 0);
+      if (sy > maxScreenY) maxScreenY = sy;
+    }
+    drawBadge(
+      ctx,
+      cBotX,
+      maxScreenY + 16,
+      `地面投影 · U:${fmt(s.u)} V:${fmt(s.v)} · 离地 ${z0}px (${zPxToMeters(z0).toFixed(2)}m)`,
+      'rgba(8, 28, 24, 0.92)',
+      '#34d399',
+      '#a7f3d0',
+    );
 
     ctx.restore();
   }

@@ -1,11 +1,17 @@
 // Version update changelog dialog + About / MIT License card + one-time popup check per version upgrade
-import { APP_AUTHOR, APP_LICENSE_NAME, MIT_LICENSE_TEXT, PIXEL_MEOW_ONLINE_URL } from '../core/about';
+import {
+  ANDROID_RELEASES_URL,
+  APP_AUTHOR,
+  APP_LICENSE_NAME,
+  MIT_LICENSE_TEXT,
+  PIXEL_MEOW_ONLINE_URL,
+} from '../core/about';
 import { resolveAssetUrl } from '../core/theotownAssets';
 import { kvGet, kvSet } from '../platform';
 import { h, openSheet, toast } from './dom';
 
 declare const __APP_VERSION__: string | undefined;
-export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.6';
+export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.4.7';
 const LAST_SEEN_VERSION_KEY = 'blendermeow.lastSeenVersion';
 
 export interface ChangelogEntry {
@@ -16,6 +22,18 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
+  {
+    version: '1.4.7',
+    date: '2026-11-25',
+    title: '球体/椭球体工具、形状上下翻转、地面投影工具与自定义网格线颜色',
+    items: [
+      '新增「球体 / 椭球体」独立形状工具：左侧形状栏与参数检查器新增独立球体预设，支持独立调节 U 宽度、V 深度与立体高度塑造任意三轴椭球，提供「正球高度 / 扁椭球 / 长椭球」快捷比例预设，完整支持解析曲面光影、四视角旋转闭合、地面阴影与体块间投影。',
+      '支持各类 3D 形状上下翻转（倒置）：在右侧「形状修改」检查器与选择工具顶部快捷条新增「↕ 上下翻转」开关，支持四棱锥、圆锥体、半球穹顶、楔形/人字屋顶、水平直角三棱柱、实心/镂空拱形、曲面柱与多截面柱体一键倒置（自动暴露倒置顶面、反转法线受光并同步更新地面与体块阴影）。',
+      '新增「地面投影」定位辅助工具：在顶部工具栏、选择工具快捷条及设置中可随时开关（快捷键 Alt+P），选中离地（Z > 0）的 3D 图形时实时在 Z = 0 地面绘制精确轮廓投影、垂直落点虚线、中心准星与 U/V/离地高度标牌，大幅提升悬空体块与多层建筑对位效率。',
+      '新增网格线自定义颜色设置：在设置弹窗「网格线设置」中接入应用内置 Pixel Meow 同款专业选色器（支持实时预览、不透明度滑条与一键恢复默认色），告别系统原生取色框。',
+      '更新日志页面与关于卡片新增安卓应用 Releases 官方下载直达链接（https://github.com/Yukyuu/BlenderMeow/releases/）与一键复制按钮。',
+    ],
+  },
   {
     version: '1.4.6',
     date: '2026-11-24',
@@ -257,6 +275,14 @@ export function buildAboutLicenseCard(): HTMLElement {
       toast(PIXEL_MEOW_ONLINE_URL);
     }
   };
+  const copyAndroidUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(ANDROID_RELEASES_URL);
+      toast('已复制安卓应用下载链接');
+    } catch {
+      toast(ANDROID_RELEASES_URL);
+    }
+  };
 
   return h(
     'div',
@@ -294,6 +320,31 @@ export function buildAboutLicenseCard(): HTMLElement {
           type: 'button',
           class: 'btn small',
           onclick: () => void copyUrl(),
+        },
+        '🌐 复制地址',
+      ),
+    ),
+    h(
+      'div',
+      { class: 'about-link-row' },
+      h('span', { class: 'about-meta-lbl' }, '🤖 安卓应用下载'),
+      h(
+        'a',
+        {
+          class: 'about-link-url',
+          href: ANDROID_RELEASES_URL,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          'data-no-i18n': '1',
+        },
+        ANDROID_RELEASES_URL,
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn small',
+          onclick: () => void copyAndroidUrl(),
         },
         '🌐 复制地址',
       ),

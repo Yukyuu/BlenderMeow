@@ -22,7 +22,7 @@ import { tr } from '../core/i18n';
 import { sanitizeFaceTexturesForShape } from '../core/textures';
 import { buildArchInspectorSection } from './archEditor';
 import { buildColumnInspectorSection } from './columnSectionEditor';
-import { h, openSheet, rangeRow, select, toast } from './dom';
+import { h, openSheet, rangeRow, select, toast, toggle } from './dom';
 import { buildLoftInspectorSection } from './loftEditor';
 import { buildGeneralMaterialSection } from './materialPanel';
 
@@ -36,7 +36,8 @@ const SHAPE_OPTIONS: { id: ShapeKind; label: string }[] = [
   { id: 'wedge', label: '楔形 / 坡屋顶' },
   { id: 'pyramid', label: '四棱锥' },
   { id: 'cone', label: '圆锥体' },
-  { id: 'dome', label: '穹顶 / 球体' },
+  { id: 'dome', label: '穹顶 / 半球' },
+  { id: 'sphere', label: '球体 / 椭球体' },
   { id: 'theotown_base', label: 'TheoTown 绿地底座' },
 ];
 
@@ -126,11 +127,12 @@ export function buildShapeForm(
             shape.heightPx = 0;
             shape.sizeU = Math.max(1, Math.round(shape.sizeU));
             shape.sizeV = Math.max(1, Math.round(shape.sizeV));
+            delete shape.flipZ;
             delete shape.colSections;
             delete shape.colInterp;
             delete shape.activeColSectionId;
           } else {
-            if (shape.heightPx <= 0) shape.heightPx = 24;
+            if (shape.heightPx <= 0) shape.heightPx = k === 'sphere' ? 18 : 24;
             if (k === 'loft') {
               ensureActiveLoftSection(shape);
               shape.loftInterp = shape.loftInterp ?? 'smooth';
@@ -242,6 +244,64 @@ export function buildShapeForm(
           '🧱 叠放到顶面',
         ),
       ),
+    );
+
+    if (shape.shapeType === 'sphere') {
+      const applyEllipsoidRatio = (ratio: number, label: string) => {
+        const avgCell = (shape.sizeU + shape.sizeV) * 0.5;
+        const nextH = Math.max(2, Math.min(1024, Math.round(avgCell * 18 * ratio)));
+        opts.beforeMutate(label);
+        shape.heightPx = nextH;
+        hRow.setNative(nextH);
+        opts.afterMutate({ needsResort: true });
+      };
+      wrap.append(
+        h(
+          'div',
+          { class: 'preset-row' },
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn small',
+              title: '按当前 U/V 宽度匹配正球体高度 (1格 = 18px)',
+              onclick: () => applyEllipsoidRatio(1.0, '匹配正球体比例'),
+            },
+            '⚪ 正球高度 (1:1)',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn small',
+              title: '将高度设为扁平椭球比例 (0.5×)',
+              onclick: () => applyEllipsoidRatio(0.5, '设为扁椭球'),
+            },
+            '🛸 扁椭球 (0.5×)',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn small',
+              title: '将高度设为竖直长椭球比例 (1.5×)',
+              onclick: () => applyEllipsoidRatio(1.5, '设为长椭球'),
+            },
+            '🥚 长椭球 (1.5×)',
+          ),
+        ),
+        h('div', { class: 'hint' }, '提示：独立调整 U 宽度、V 深度与立体高度即可自由塑造任意三轴椭球体。'),
+      );
+    }
+
+    wrap.append(
+      toggle('↕ 上下翻转（倒置形状）', Boolean(shape.flipZ), (v) => {
+        opts.beforeMutate(v ? '上下翻转图形' : '恢复图形正向');
+        if (v) shape.flipZ = true;
+        else delete shape.flipZ;
+        sanitizeFaceTexturesForShape(shape);
+        opts.afterMutate({ needsResort: true });
+      }),
     );
   }
 

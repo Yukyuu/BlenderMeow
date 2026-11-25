@@ -58,6 +58,7 @@ export type ShapeKind =
   | 'pyramid'
   | 'cone'
   | 'dome'
+  | 'sphere'
   | 'theotown_base';
 
 export type TriPrismCut = 'vertical' | 'slope';
@@ -91,6 +92,7 @@ export interface ParametricShape {
   sizeV: number;
   heightPx: number;
   ori: ViewRotation;
+  flipZ?: boolean;
   prismSides: number;
   triPrismCut: TriPrismCut;
   wedgeMode: 'ramp' | 'gable';
@@ -132,6 +134,7 @@ export const SHAPE_LABELS: Record<ShapeKind, string> = {
   pyramid: '四棱锥',
   cone: '圆锥体',
   dome: '穹顶 / 球体',
+  sphere: '球体 / 椭球体',
   theotown_base: 'TheoTown 绿地底座',
 };
 
@@ -170,7 +173,7 @@ export function createDefaultShape(
     zPx: 0,
     sizeU: 1,
     sizeV: 1,
-    heightPx: shapeType === 'theotown_base' ? 0 : 24,
+    heightPx: shapeType === 'theotown_base' ? 0 : shapeType === 'sphere' ? 18 : 24,
     ori: 0,
     prismSides: 6,
     triPrismCut: 'vertical',
@@ -187,6 +190,11 @@ export function createDefaultShape(
     baseColor,
     pattern,
   };
+  if (overrides.flipZ && shapeType !== 'theotown_base') {
+    out.flipZ = true;
+  } else {
+    delete out.flipZ;
+  }
   if (hasLoftData && loftSections) {
     out.loftSections = loftSections;
     out.loftInterp = overrides.loftInterp ?? 'smooth';
@@ -258,6 +266,11 @@ export function cloneShape(s: ParametricShape): ParametricShape {
     },
     faceTextures: cloneFaceTextures(s.faceTextures),
   };
+  if (s.flipZ && s.shapeType !== 'theotown_base') {
+    copy.flipZ = true;
+  } else {
+    delete copy.flipZ;
+  }
   if (s.shapeType === 'loft') {
     copy.loftSections = cloneLoftSections(s.loftSections ?? createDefaultLoftSections());
     copy.loftInterp = s.loftInterp ?? 'smooth';
@@ -985,7 +998,8 @@ function renderConvexMesh(
               if (yEdge < topYAtPx) topYAtPx = yEdge;
             }
           }
-          const wy = Math.max(0, Math.floor(py - topYAtPx));
+          const rawWy = Math.max(0, Math.floor(py - topYAtPx));
+          const wy = shape.flipZ ? Math.max(0, wallH - 1 - rawWy) : rawWy;
           const faceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
           baseOut = sampleWallPattern(wx, wy, spanW, wallH, shape.pattern, flatCol, faceShade);
         }
@@ -1106,6 +1120,28 @@ function renderConvexMesh(
 
 // ---------------- Individual Geometry Builders ----------------
 
+function flipVec3Z(pt: Vec3, zSum: number): Vec3 {
+  return { x: pt.x, y: pt.y, z: zSum - pt.z };
+}
+
+function flipMeshFacesZ(
+  faces: MeshFace[],
+  z0: number,
+  z1: number,
+  topCap?: MeshFace,
+): MeshFace[] {
+  const zSum = z0 + z1;
+  const out: MeshFace[] = faces.map((f) => ({
+    ...f,
+    verts: [...f.verts].reverse().map((pt) => flipVec3Z(pt, zSum)),
+    uvOrigin: f.uvOrigin ? flipVec3Z(f.uvOrigin, zSum) : undefined,
+    uvEndU: f.uvEndU ? flipVec3Z(f.uvEndU, zSum) : undefined,
+    uvEndV: f.uvEndV ? flipVec3Z(f.uvEndV, zSum) : undefined,
+  }));
+  if (topCap) out.push(topCap);
+  return out;
+}
+
 export function buildBoxFaces(
   u0: number,
   v0: number,
@@ -1114,6 +1150,7 @@ export function buildBoxFaces(
   z0: number,
   z1: number,
   ori: ViewRotation,
+  flipZ = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   const p000 = P(0, 0, z0);
@@ -1126,11 +1163,11 @@ export function buildBoxFaces(
   const p011 = P(0, 1, z1);
 
   return [
-    { verts: [p001, p011, p111, p101], kind: 'top', faceId: 'top', uvOrigin: p001, uvEndU: p101, uvEndV: p011 },       // +Z top
-    { verts: [p010, p110, p111, p011], kind: 'left', faceId: 'wall_pv', uvOrigin: p011, uvEndU: p111, uvEndV: p010 },  // +V front-left
-    { verts: [p110, p100, p101, p111], kind: 'right', faceId: 'wall_pu', uvOrigin: p111, uvEndU: p101, uvEndV: p110 }, // +U front-right
-    { verts: [p100, p000, p001, p101], kind: 'slope', faceId: 'wall_nv', uvOrigin: p101, uvEndU: p001, uvEndV: p100 }, // -V back-right
-    { verts: [p000, p010, p011, p001], kind: 'slope', faceId: 'wall_nu', uvOrigin: p001, uvEndU: p011, uvEndV: p000 }, // -U back-left
+    { verts: [p001, p011, p111, p101], kind: 'top', faceId: 'top', uvOrigin: p001, uvEndU: p101, uvEndV: p011 },
+    { verts: [p010, p110, p111, p011], kind: 'left', faceId: 'wall_pv', uvOrigin: flipZ ? p010 : p011, uvEndU: flipZ ? p110 : p111, uvEndV: flipZ ? p011 : p010 },
+    { verts: [p110, p100, p101, p111], kind: 'right', faceId: 'wall_pu', uvOrigin: flipZ ? p110 : p111, uvEndU: flipZ ? p100 : p101, uvEndV: flipZ ? p111 : p110 },
+    { verts: [p100, p000, p001, p101], kind: 'slope', faceId: 'wall_nv', uvOrigin: flipZ ? p100 : p101, uvEndU: flipZ ? p000 : p001, uvEndV: flipZ ? p101 : p100 },
+    { verts: [p000, p010, p011, p001], kind: 'slope', faceId: 'wall_nu', uvOrigin: flipZ ? p000 : p001, uvEndU: flipZ ? p010 : p011, uvEndV: flipZ ? p001 : p000 },
   ];
 }
 
@@ -1143,9 +1180,10 @@ export function buildRightTriPrismFaces(
   z1: number,
   ori: ViewRotation,
   cut: TriPrismCut = 'vertical',
+  flipZ = false,
 ): MeshFace[] {
   if (cut === 'slope') {
-    return buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, 'ramp');
+    return buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, 'ramp', flipZ);
   }
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   // Vertical half-box right triangular prism: right angle at local (0, 0), hypotenuse (0, 1)-(1, 0)
@@ -1157,10 +1195,10 @@ export function buildRightTriPrismFaces(
   const T2 = P(1, 0, z1);
 
   return [
-    { verts: [T0, T1, T2], kind: 'top', faceId: 'top', uvOrigin: T0, uvEndU: T2, uvEndV: T1 },             // +Z right-triangle roof
-    { verts: [B1, B2, T2, T1], kind: 'slope', faceId: 'wall_hyp', uvOrigin: T1, uvEndU: T2, uvEndV: B1 },  // vertical diagonal hypotenuse wall
-    { verts: [B0, B1, T1, T0], kind: 'left', faceId: 'wall_nu', uvOrigin: T0, uvEndU: T1, uvEndV: B0 },    // vertical leg wall (lu = 0)
-    { verts: [B2, B0, T0, T2], kind: 'right', faceId: 'wall_nv', uvOrigin: T2, uvEndU: T0, uvEndV: B2 },   // vertical leg wall (lv = 0)
+    { verts: [T0, T1, T2], kind: 'top', faceId: 'top', uvOrigin: T0, uvEndU: T2, uvEndV: T1 },
+    { verts: [B1, B2, T2, T1], kind: 'slope', faceId: 'wall_hyp', uvOrigin: flipZ ? B1 : T1, uvEndU: flipZ ? B2 : T2, uvEndV: flipZ ? T1 : B1 },
+    { verts: [B0, B1, T1, T0], kind: 'left', faceId: 'wall_nu', uvOrigin: flipZ ? B0 : T0, uvEndU: flipZ ? B1 : T1, uvEndV: flipZ ? T0 : B0 },
+    { verts: [B2, B0, T0, T2], kind: 'right', faceId: 'wall_nv', uvOrigin: flipZ ? B2 : T2, uvEndU: flipZ ? B0 : T0, uvEndV: flipZ ? T2 : B2 },
   ];
 }
 
@@ -1173,6 +1211,7 @@ export function buildPrismFaces(
   z1: number,
   sides: number,
   ori: ViewRotation,
+  flipZ = false,
 ): MeshFace[] {
   const n = Math.max(3, Math.min(12, Math.round(sides)));
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
@@ -1203,9 +1242,9 @@ export function buildPrismFaces(
       verts: [bot[i], bot[j], top[j], top[i]],
       kind: 'slope',
       faceId: `side_${i}`,
-      uvOrigin: top[i],
-      uvEndU: top[j],
-      uvEndV: bot[i],
+      uvOrigin: flipZ ? bot[i] : top[i],
+      uvEndU: flipZ ? bot[j] : top[j],
+      uvEndV: flipZ ? top[i] : bot[i],
     });
   }
   return faces;
@@ -1220,8 +1259,17 @@ export function buildWedgeFaces(
   z1: number,
   ori: ViewRotation,
   mode: 'ramp' | 'gable',
+  flipZ = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
+  const topCap: MeshFace = {
+    verts: [P(0, 0, z1), P(0, 1, z1), P(1, 1, z1), P(1, 0, z1)],
+    kind: 'top',
+    faceId: 'top',
+    uvOrigin: P(0, 0, z1),
+    uvEndU: P(1, 0, z1),
+    uvEndV: P(0, 1, z1),
+  };
   if (mode === 'ramp') {
     // Low edge at lu=0 (z0), high edge at lu=1 (z1)
     const A = P(0, 0, z0);
@@ -1230,12 +1278,13 @@ export function buildWedgeFaces(
     const D = P(1, 0, z0);
     const E = P(1, 1, z1);
     const F = P(1, 0, z1);
-    return [
-      { verts: [A, B, E, F], kind: 'slope', faceId: 'slope_main', uvOrigin: F, uvEndU: E, uvEndV: A },             // sloped ramp face
-      { verts: [C, D, F, E], kind: 'right', faceId: 'wall_back', uvOrigin: E, uvEndU: F, uvEndV: C },              // vertical back/right wall
-      { verts: [B, C, E], kind: 'left', faceId: 'tri_pv', uvOrigin: P(0, 1, z1), uvEndU: E, uvEndV: B },           // lv=1 side triangle
-      { verts: [D, A, F], kind: 'slope', faceId: 'tri_nv', uvOrigin: F, uvEndU: P(0, 0, z1), uvEndV: D },          // lv=0 side triangle
+    const faces: MeshFace[] = [
+      { verts: [A, B, E, F], kind: 'slope', faceId: 'slope_main', uvOrigin: F, uvEndU: E, uvEndV: A },
+      { verts: [C, D, F, E], kind: 'right', faceId: 'wall_back', uvOrigin: E, uvEndU: F, uvEndV: C },
+      { verts: [B, C, E], kind: 'left', faceId: 'tri_pv', uvOrigin: P(0, 1, z1), uvEndU: E, uvEndV: B },
+      { verts: [D, A, F], kind: 'slope', faceId: 'tri_nv', uvOrigin: F, uvEndU: P(0, 0, z1), uvEndV: D },
     ];
+    return flipZ ? flipMeshFacesZ(faces, z0, z1, topCap) : faces;
   } else {
     // Gable roof: ridge along lu = 0..1 at lv = 0.5, height z1
     const A = P(0, 0, z0);
@@ -1244,12 +1293,13 @@ export function buildWedgeFaces(
     const D = P(1, 0, z0);
     const R0 = P(0, 0.5, z1);
     const R1 = P(1, 0.5, z1);
-    return [
-      { verts: [B, C, R1, R0], kind: 'slope', faceId: 'slope_pv', uvOrigin: R0, uvEndU: R1, uvEndV: B },           // +lv slope
-      { verts: [D, A, R0, R1], kind: 'slope', faceId: 'slope_nv', uvOrigin: R1, uvEndU: R0, uvEndV: D },           // -lv slope
-      { verts: [A, B, R0], kind: 'slope', faceId: 'gable_nu', uvOrigin: P(0, 0, z1), uvEndU: P(0, 1, z1), uvEndV: A }, // lu=0 gable triangle
-      { verts: [C, D, R1], kind: 'slope', faceId: 'gable_pu', uvOrigin: P(1, 1, z1), uvEndU: P(1, 0, z1), uvEndV: C }, // lu=1 gable triangle
+    const faces: MeshFace[] = [
+      { verts: [B, C, R1, R0], kind: 'slope', faceId: 'slope_pv', uvOrigin: R0, uvEndU: R1, uvEndV: B },
+      { verts: [D, A, R0, R1], kind: 'slope', faceId: 'slope_nv', uvOrigin: R1, uvEndU: R0, uvEndV: D },
+      { verts: [A, B, R0], kind: 'slope', faceId: 'gable_nu', uvOrigin: P(0, 0, z1), uvEndU: P(0, 1, z1), uvEndV: A },
+      { verts: [C, D, R1], kind: 'slope', faceId: 'gable_pu', uvOrigin: P(1, 1, z1), uvEndU: P(1, 0, z1), uvEndV: C },
     ];
+    return flipZ ? flipMeshFacesZ(faces, z0, z1, topCap) : faces;
   }
 }
 
@@ -1261,6 +1311,7 @@ export function buildPyramidFaces(
   z0: number,
   z1: number,
   ori: ViewRotation,
+  flipZ = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   const A = P(0, 0, z0);
@@ -1279,12 +1330,22 @@ export function buildPyramidFaces(
     };
     return { uvOrigin, uvEndU, uvEndV };
   };
-  return [
+  const faces: MeshFace[] = [
     { verts: [B, C, apex], kind: 'left', faceId: 'pyr_pv', ...makeTriUv(B, C) },
     { verts: [C, D, apex], kind: 'right', faceId: 'pyr_pu', ...makeTriUv(C, D) },
     { verts: [D, A, apex], kind: 'slope', faceId: 'pyr_nv', ...makeTriUv(D, A) },
     { verts: [A, B, apex], kind: 'slope', faceId: 'pyr_nu', ...makeTriUv(A, B) },
   ];
+  if (!flipZ) return faces;
+  const topCap: MeshFace = {
+    verts: [P(0, 0, z1), P(0, 1, z1), P(1, 1, z1), P(1, 0, z1)],
+    kind: 'top',
+    faceId: 'top',
+    uvOrigin: P(0, 0, z1),
+    uvEndU: P(1, 0, z1),
+    uvEndV: P(0, 1, z1),
+  };
+  return flipMeshFacesZ(faces, z0, z1, topCap);
 }
 
 function renderCylinder(
@@ -1392,7 +1453,8 @@ function renderCylinder(
 
     // Cylinder side body
     for (let py = Math.max(minPy, yt1 + 1); py <= Math.min(maxPy, yb1); py++) {
-      const wy = py - (yt1 + 1);
+      const rawWy = py - (yt1 + 1);
+      const wy = shape.flipZ ? Math.max(0, wallH - 1 - rawWy) : rawWy;
       const col = shape.pattern.type !== 'none' && shape.pattern.type !== 'roof_grid'
         ? sampleWallPattern(cxIdx, wy, spanW, wallH, shape.pattern, bodyCol, 'curve')
         : bodyCol;
@@ -1477,20 +1539,22 @@ function renderCone(
   const ru = Math.max(1e-4, su * 0.5);
   const rv = Math.max(1e-4, sv * 0.5);
   const coneH = Math.max(1, z1 - z0);
-  const [apexSx, apexSy] = isoToScreenPx(cu, cv, z1, originX, originY);
-  const [baseCx, baseCy] = isoToScreenPx(cu, cv, z0, originX, originY);
+  const flipZ = Boolean(shape.flipZ);
+  const [apexSx, apexSy] = isoToScreenPx(cu, cv, flipZ ? z0 : z1, originX, originY);
+  const [baseCx, baseCy] = isoToScreenPx(cu, cv, flipZ ? z1 : z0, originX, originY);
 
   const rxScreen = 16 * Math.hypot(ru, rv);
   const ryScreen = 8 * Math.hypot(ru, rv);
   const minX = clamp(Math.floor(Math.min(apexSx, baseCx - rxScreen)) - 2, -1, w);
   const maxX = clamp(Math.ceil(Math.max(apexSx, baseCx + rxScreen)) + 2, -1, w);
   const minY = clamp(Math.floor(Math.min(apexSy, baseCy - ryScreen)) - 2, -1, h);
-  const maxY = clamp(Math.ceil(baseCy + ryScreen) + 2, -1, h);
+  const maxY = clamp(Math.ceil(Math.max(apexSy, baseCy + ryScreen)) + 2, -1, h);
   if (maxX < 0 || minX >= w || maxY < 0 || minY >= h || minX > maxX || minY > maxY) return;
 
   const bw = maxX - minX + 1;
   const bh = maxY - minY + 1;
   const tmpBuf = new Uint8ClampedArray(bw * bh * 4);
+  const capTag = flipZ ? new Uint8Array(bw * bh) : null; // 1 = body, 2 = flat top cap
   const tmpZ = activeRenderAux ? new Float32Array(bw * bh) : null;
   const tmpSun = activeRenderAux ? new Uint8Array(bw * bh) : null;
 
@@ -1510,6 +1574,32 @@ function renderCone(
     for (let lx = 0; lx < bw; lx++) {
       const dx = (minX + lx + 0.5) - apexSx;
       const d = dx / 16;
+
+      if (flipZ) {
+        // Test flat top ellipse cap at z = z1 first (strictly in front of any cone flank at z <= z1)
+        const sTop = (dy + coneH) / 8;
+        const uTop = 0.5 * (sTop + d);
+        const vTop = 0.5 * (sTop - d);
+        if (uTop * uTop * invRu2 + vTop * vTop * invRv2 <= 1 + 1e-6) {
+          let col = triad.top;
+          if (useTopPattern) {
+            const uFrac = clamp((uTop + ru) / Math.max(1e-4, su), 0, 1);
+            const vFrac = clamp((vTop + rv) / Math.max(1e-4, sv), 0, 1);
+            const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
+            col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, triad.top, shape.pattern);
+          }
+          setPixel(tmpBuf, bw, bh, lx, ly, col);
+          const li = ly * bw + lx;
+          if (capTag) capTag[li] = 2;
+          if (tmpZ && tmpSun) {
+            tmpZ[li] = z1;
+            tmpSun[li] = 2;
+          }
+          rowWritten = true;
+          continue;
+        }
+      }
+
       const B = 2 * d * (inv4Ru2 - inv4Rv2) + 16 * dy * invH2;
       const C = d * d * (inv4Ru2 + inv4Rv2) - dy * dy * invH2;
 
@@ -1518,10 +1608,10 @@ function renderCone(
       if (Math.abs(A) < 1e-9) {
         if (Math.abs(B) > 1e-9) {
           const s = -C / B;
-          const wDrop = dy - 8 * s;
-          if (wDrop >= -1e-4 && wDrop <= coneH + 1e-4) {
+          const wVal = flipZ ? 8 * s - dy : dy - 8 * s;
+          if (wVal >= -1e-4 && wVal <= coneH + 1e-4) {
             bestS = s;
-            bestW = wDrop;
+            bestW = wVal;
           }
         }
       } else {
@@ -1530,13 +1620,13 @@ function renderCone(
           const sq = Math.sqrt(disc);
           const inv2A = 1 / (2 * A);
           const s1 = (-B - sq) * inv2A;
-          const w1 = dy - 8 * s1;
+          const w1 = flipZ ? 8 * s1 - dy : dy - 8 * s1;
           if (w1 >= -1e-4 && w1 <= coneH + 1e-4 && s1 > bestS) {
             bestS = s1;
             bestW = w1;
           }
           const s2 = (-B + sq) * inv2A;
-          const w2 = dy - 8 * s2;
+          const w2 = flipZ ? 8 * s2 - dy : dy - 8 * s2;
           if (w2 >= -1e-4 && w2 <= coneH + 1e-4 && s2 > bestS) {
             bestS = s2;
             bestW = w2;
@@ -1550,15 +1640,23 @@ function renderCone(
       const vTilde = 0.5 * (bestS - d);
       let nx = uTilde * invRu2;
       let ny = vTilde * invRv2;
-      let nz = 18 * wClamped * invH2;
+      let nz = (flipZ ? -18 : 18) * wClamped * invH2;
       if (Math.hypot(nx, ny, nz) < 1e-7) {
         nx = -0.35;
         ny = 0.85;
-        nz = (18 * Math.hypot(ru, rv)) / coneH;
+        nz = ((flipZ ? -18 : 18) * Math.hypot(ru, rv)) / coneH;
       }
 
-      let col = shadeByNormal(shape.baseColor, nx, ny, nz, shape.autoShade, shape.shadeContrast, shape.roofColor);
-      if (useTopPattern) {
+      let col = shadeByNormal(
+        shape.baseColor,
+        nx,
+        ny,
+        nz,
+        shape.autoShade,
+        shape.shadeContrast,
+        flipZ ? null : shape.roofColor,
+      );
+      if (!flipZ && useTopPattern) {
         const nLen = Math.hypot(nx, ny, nz) || 1;
         if (nz / nLen > 0.35) {
           const uFrac = clamp((uTilde + ru) / Math.max(1e-4, su), 0, 1);
@@ -1567,12 +1665,14 @@ function renderCone(
           col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, col, shape.pattern);
         }
       } else if (useWallPattern) {
-        col = sampleWallPattern(lx, Math.floor(wClamped), bw, wallH, shape.pattern, col, 'curve');
+        const wy = flipZ ? Math.floor(coneH - wClamped) : Math.floor(wClamped);
+        col = sampleWallPattern(lx, wy, bw, wallH, shape.pattern, col, 'curve');
       }
       setPixel(tmpBuf, bw, bh, lx, ly, col);
+      const li = ly * bw + lx;
+      if (capTag) capTag[li] = 1;
       if (tmpZ && tmpSun) {
-        const li = ly * bw + lx;
-        tmpZ[li] = clamp(z1 - wClamped, z0, z1);
+        tmpZ[li] = clamp(flipZ ? z0 + wClamped : z1 - wClamped, z0, z1);
         tmpSun[li] = classifySunFacingMetricNormal(nx, ny, nz);
       }
       rowWritten = true;
@@ -1580,62 +1680,78 @@ function renderCone(
 
     // Thin-tip watertight guard for steep needle cones near apex
     const pyAbs = minY + ly;
-    if (!rowWritten && pyAbs >= Math.round(apexSy) && pyAbs <= Math.round(baseCy)) {
+    const inTipSpan = flipZ
+      ? pyAbs >= Math.round(baseCy) && pyAbs <= Math.round(apexSy)
+      : pyAbs >= Math.round(apexSy) && pyAbs <= Math.round(baseCy);
+    if (!rowWritten && inTipSpan) {
       const lxApex = clamp(Math.round(apexSx) - minX, 0, bw - 1);
-      const wFallback = clamp(pyAbs + 0.5 - apexSy, 0, coneH);
+      const wFallback = clamp(flipZ ? apexSy - (pyAbs + 0.5) : pyAbs + 0.5 - apexSy, 0, coneH);
+      const tipNz = (flipZ ? -18 : 18) * wFallback * invH2;
       const tipCol = shadeByNormal(
         shape.baseColor,
         1 / ru,
         1 / rv,
-        18 * wFallback * invH2,
+        tipNz,
         shape.autoShade,
         shape.shadeContrast,
-        shape.roofColor,
+        flipZ ? null : shape.roofColor,
       );
       setPixel(tmpBuf, bw, bh, lxApex, ly, tipCol);
+      const li = ly * bw + lxApex;
+      if (capTag) capTag[li] = 1;
       if (tmpZ && tmpSun) {
-        const li = ly * bw + lxApex;
-        tmpZ[li] = clamp(z1 - wFallback, z0, z1);
-        tmpSun[li] = 2;
+        tmpZ[li] = clamp(flipZ ? z0 + wFallback : z1 - wFallback, z0, z1);
+        tmpSun[li] = flipZ ? classifySunFacingMetricNormal(1 / ru, 1 / rv, tipNz) : 2;
       }
     }
   }
 
   if (shape.edgeHighlight) {
-    const [hlX, hlY] = isoToScreenPx(cu - ru * 0.35, cv + rv * 0.85, z0, originX, originY);
-    const hlMask = new Uint8Array(bw * bh);
-    for (let i = 0; i < bw * bh; i++) {
-      if (tmpBuf[i * 4 + 3] > 0) hlMask[i] = 1;
-    }
-    let ix0 = Math.round(apexSx - minX);
-    let iy0 = Math.round(apexSy - minY);
-    const ix1 = Math.round(hlX - minX);
-    const iy1 = Math.round(hlY - minY);
-    const sx0 = ix0;
-    const sy0 = iy0;
-    const dxLine = Math.abs(ix1 - ix0);
-    const dyLine = Math.abs(iy1 - iy0);
-    const stepX = ix0 < ix1 ? 1 : -1;
-    const stepY = iy0 < iy1 ? 1 : -1;
-    let err = dxLine - dyLine;
-    for (let guard = 0; guard < 16384; guard++) {
-      const isEnd = (ix0 === sx0 && iy0 === sy0) || (ix0 === ix1 && iy0 === iy1);
-      if (
-        !isEnd &&
-        ix0 > 0 &&
-        iy0 > 0 &&
-        ix0 < bw - 1 &&
-        iy0 < bh - 1
-      ) {
-        const mi = iy0 * bw + ix0;
-        if (hlMask[mi] && hlMask[mi - 1] && hlMask[mi + 1] && hlMask[mi - bw] && hlMask[mi + bw]) {
-          setPixel(tmpBuf, bw, bh, ix0, iy0, triad.highlight);
+    if (flipZ && capTag) {
+      for (let ly = 0; ly < bh - 1; ly++) {
+        for (let lx = 0; lx < bw; lx++) {
+          const idx = ly * bw + lx;
+          if (capTag[idx] === 2 && capTag[idx + bw] === 1) {
+            setPixel(tmpBuf, bw, bh, lx, ly, triad.highlight);
+          }
         }
       }
-      if (ix0 === ix1 && iy0 === iy1) break;
-      const e2 = err * 2;
-      if (e2 > -dyLine) { err -= dyLine; ix0 += stepX; }
-      if (e2 < dxLine) { err += dxLine; iy0 += stepY; }
+    } else {
+      const [hlX, hlY] = isoToScreenPx(cu - ru * 0.35, cv + rv * 0.85, z0, originX, originY);
+      const hlMask = new Uint8Array(bw * bh);
+      for (let i = 0; i < bw * bh; i++) {
+        if (tmpBuf[i * 4 + 3] > 0) hlMask[i] = 1;
+      }
+      let ix0 = Math.round(apexSx - minX);
+      let iy0 = Math.round(apexSy - minY);
+      const ix1 = Math.round(hlX - minX);
+      const iy1 = Math.round(hlY - minY);
+      const sx0 = ix0;
+      const sy0 = iy0;
+      const dxLine = Math.abs(ix1 - ix0);
+      const dyLine = Math.abs(iy1 - iy0);
+      const stepX = ix0 < ix1 ? 1 : -1;
+      const stepY = iy0 < iy1 ? 1 : -1;
+      let err = dxLine - dyLine;
+      for (let guard = 0; guard < 16384; guard++) {
+        const isEnd = (ix0 === sx0 && iy0 === sy0) || (ix0 === ix1 && iy0 === iy1);
+        if (
+          !isEnd &&
+          ix0 > 0 &&
+          iy0 > 0 &&
+          ix0 < bw - 1 &&
+          iy0 < bh - 1
+        ) {
+          const mi = iy0 * bw + ix0;
+          if (hlMask[mi] && hlMask[mi - 1] && hlMask[mi + 1] && hlMask[mi - bw] && hlMask[mi + bw]) {
+            setPixel(tmpBuf, bw, bh, ix0, iy0, triad.highlight);
+          }
+        }
+        if (ix0 === ix1 && iy0 === iy1) break;
+        const e2 = err * 2;
+        if (e2 > -dyLine) { err -= dyLine; ix0 += stepX; }
+        if (e2 < dxLine) { err += dxLine; iy0 += stepY; }
+      }
     }
   }
   if (shape.outlineMode !== 'none') {
@@ -1688,8 +1804,9 @@ function renderDomeOrSphere(
   const ru = Math.max(1e-4, su * 0.5);
   const rv = Math.max(1e-4, sv * 0.5);
   const totalH = Math.max(1, z1 - z0);
-  const isSphere = shape.domeMode === 'sphere';
-  const zCenter = isSphere ? z0 + totalH * 0.5 : z0;
+  const isSphere = shape.shapeType === 'sphere' || shape.domeMode === 'sphere';
+  const isFlippedDome = !isSphere && Boolean(shape.flipZ);
+  const zCenter = isSphere ? z0 + totalH * 0.5 : isFlippedDome ? z1 : z0;
   const rz = Math.max(0.5, isSphere ? totalH * 0.5 : totalH);
 
   // Analytical orthographic-isometric ellipsoid raycaster at half-pixel centers (watertight at any scale)
@@ -1700,13 +1817,14 @@ function renderDomeOrSphere(
 
   const minX = clamp(Math.floor(centerSx - rxScreen) - 1, -1, w);
   const maxX = clamp(Math.ceil(centerSx + rxScreen) + 1, -1, w);
-  const minY = clamp(Math.floor(centerSy - ryMax) - 1, -1, h);
-  const maxY = clamp(Math.ceil(centerSy + (isSphere ? ryMax : ryScreenIso)) + 1, -1, h);
+  const minY = clamp(Math.floor(centerSy - (isFlippedDome ? ryScreenIso : ryMax)) - 1, -1, h);
+  const maxY = clamp(Math.ceil(centerSy + (isSphere || isFlippedDome ? ryMax : ryScreenIso)) + 1, -1, h);
   if (maxX < 0 || minX >= w || maxY < 0 || minY >= h || minX > maxX || minY > maxY) return;
 
   const bw = maxX - minX + 1;
   const bh = maxY - minY + 1;
   const tmpBuf = new Uint8ClampedArray(bw * bh * 4);
+  const capTag = isFlippedDome ? new Uint8Array(bw * bh) : null;
   const tmpZ = activeRenderAux ? new Float32Array(bw * bh) : null;
   const tmpSun = activeRenderAux ? new Uint8Array(bw * bh) : null;
 
@@ -1724,6 +1842,31 @@ function renderDomeOrSphere(
     for (let lx = 0; lx < bw; lx++) {
       const dx = (minX + lx + 0.5) - centerSx;
       const d = dx / 16;
+
+      if (isFlippedDome) {
+        // Test flat top ellipse cap at z = z1 (zTilde = 0) first
+        const sCap = dy / 8;
+        const uCap = 0.5 * (sCap + d);
+        const vCap = 0.5 * (sCap - d);
+        if (uCap * uCap * invRu2 + vCap * vCap * invRv2 <= 1 + 1e-6) {
+          let col = triad.top;
+          if (useRoofGrid) {
+            const uFrac = clamp((uCap + ru) / Math.max(1e-4, su), 0, 1);
+            const vFrac = clamp((vCap + rv) / Math.max(1e-4, sv), 0, 1);
+            const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
+            col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, triad.top, shape.pattern);
+          }
+          setPixel(tmpBuf, bw, bh, lx, ly, col);
+          const li = ly * bw + lx;
+          if (capTag) capTag[li] = 2;
+          if (tmpZ && tmpSun) {
+            tmpZ[li] = z1;
+            tmpSun[li] = 2;
+          }
+          continue;
+        }
+      }
+
       const B = 2 * d * (inv4Ru2 - inv4Rv2) - 16 * dy * invRz2;
       const C = d * d * (inv4Ru2 + inv4Rv2) + dy * dy * invRz2 - 1;
       const disc = B * B - 4 * A * C;
@@ -1731,15 +1874,26 @@ function renderDomeOrSphere(
 
       const sPlus = (-B + Math.sqrt(disc)) * inv2A;
       const zTilde = 8 * sPlus - dy;
-      if (!isSphere && zTilde < 0) continue;
+      if (!isSphere) {
+        if (!isFlippedDome && zTilde < 0) continue;
+        if (isFlippedDome && zTilde > 0) continue;
+      }
 
       const uTilde = 0.5 * (sPlus + d);
       const vTilde = 0.5 * (sPlus - d);
       const nx = uTilde * invRu2;
       const ny = vTilde * invRv2;
       const nz = 18 * zTilde * invRz2;
-      let col = shadeByNormal(shape.baseColor, nx, ny, nz, shape.autoShade, shape.shadeContrast, shape.roofColor);
-      if (useRoofGrid) {
+      let col = shadeByNormal(
+        shape.baseColor,
+        nx,
+        ny,
+        nz,
+        shape.autoShade,
+        shape.shadeContrast,
+        isFlippedDome ? null : shape.roofColor,
+      );
+      if (useRoofGrid && !isFlippedDome) {
         const nLen = Math.hypot(nx, ny, nz) || 1;
         if (nz / nLen > 0.45) {
           const uFrac = clamp((uTilde + ru) / Math.max(1e-4, su), 0, 1);
@@ -1749,10 +1903,22 @@ function renderDomeOrSphere(
         }
       }
       setPixel(tmpBuf, bw, bh, lx, ly, col);
+      const li = ly * bw + lx;
+      if (capTag) capTag[li] = 1;
       if (tmpZ && tmpSun) {
-        const li = ly * bw + lx;
         tmpZ[li] = clamp(zCenter + zTilde, z0, z1);
         tmpSun[li] = classifySunFacingMetricNormal(nx, ny, nz);
+      }
+    }
+  }
+
+  if (isFlippedDome && shape.edgeHighlight && capTag) {
+    for (let ly = 0; ly < bh - 1; ly++) {
+      for (let lx = 0; lx < bw; lx++) {
+        const idx = ly * bw + lx;
+        if (capTag[idx] === 2 && capTag[idx + bw] === 1) {
+          setPixel(tmpBuf, bw, bh, lx, ly, triad.highlight);
+        }
       }
     }
   }
@@ -1959,17 +2125,31 @@ function renderLoftColumn(
   const lsu = oddOri ? sv : su;
   const lsv = oddOri ? su : sv;
   const isHollow = Boolean(shape.loftHollow);
-  const { rings, innerRings, innerFloorRing, tMin, tMax, avgPerimLocal, avgInnerPerimLocal } =
-    buildAlignedLoftRings(
-      secs,
-      sampleCount,
-      ringBudget,
-      shape.loftInterp ?? 'smooth',
-      isHollow,
-      lsu,
-      lsv,
-      shape.loftFloorT ?? 0,
-    );
+  const flipZ = Boolean(shape.flipZ);
+  const rawLoft = buildAlignedLoftRings(
+    secs,
+    sampleCount,
+    ringBudget,
+    shape.loftInterp ?? 'smooth',
+    isHollow,
+    lsu,
+    lsv,
+    shape.loftFloorT ?? 0,
+  );
+  const rings = flipZ
+    ? [...rawLoft.rings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+    : rawLoft.rings;
+  const innerRings = rawLoft.innerRings
+    ? flipZ
+      ? [...rawLoft.innerRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+      : rawLoft.innerRings
+    : undefined;
+  const innerFloorRing = flipZ ? undefined : rawLoft.innerFloorRing;
+  const hasFlippedSolidTop = flipZ && Boolean(rawLoft.innerFloorRing);
+  const tMin = flipZ ? 1 - rawLoft.tMax : rawLoft.tMin;
+  const tMax = flipZ ? 1 - rawLoft.tMin : rawLoft.tMax;
+  const avgPerimLocal = rawLoft.avgPerimLocal;
+  const avgInnerPerimLocal = rawLoft.avgInnerPerimLocal;
   if (rings.length < 2) return;
 
   const numRings = rings.length;
@@ -2310,9 +2490,9 @@ function renderLoftColumn(
     rasterHorizontalCap(inRingsScreen[0], null, zFloor, floorCol);
   }
 
-  // 4. Top cap (solid or annular ring when hollow)
+  // 4. Top cap (solid or annular ring when hollow; solid when flipped cup with recessed floor)
   const topPoly = ringsScreen[numRings - 1];
-  const topInnerPoly = inRingsScreen ? inRingsScreen[inRingsScreen.length - 1] : null;
+  const topInnerPoly = inRingsScreen && !hasFlippedSolidTop ? inRingsScreen[inRingsScreen.length - 1] : null;
   rasterHorizontalCap(topPoly, topInnerPoly, zTopCap, triad.top);
 
   // Front top-rim highlight
@@ -2438,14 +2618,19 @@ function renderArch(
     tag: 'outer' | 'inner' | 'bottom' | 'top_flat' | 'side_wall';
   }
 
+  const flipZ = Boolean(shape.flipZ);
   const quads: ExtrudedQuad[] = [];
   for (const e of cs.edges) {
-    const zA = z0 + e.h0 * heightPx;
-    const zB = z0 + e.h1 * heightPx;
-    const A0 = transformLocalToViewPoint(e.s0, 0, zA, u0, v0, su, sv, viewOri);
-    const B0 = transformLocalToViewPoint(e.s1, 0, zB, u0, v0, su, sv, viewOri);
-    const B1 = transformLocalToViewPoint(e.s1, 1, zB, u0, v0, su, sv, viewOri);
-    const A1 = transformLocalToViewPoint(e.s0, 1, zA, u0, v0, su, sv, viewOri);
+    const sA = flipZ ? e.s1 : e.s0;
+    const sB = flipZ ? e.s0 : e.s1;
+    const hA = flipZ ? 1 - e.h1 : e.h0;
+    const hB = flipZ ? 1 - e.h0 : e.h1;
+    const zA = z0 + hA * heightPx;
+    const zB = z0 + hB * heightPx;
+    const A0 = transformLocalToViewPoint(sA, 0, zA, u0, v0, su, sv, viewOri);
+    const B0 = transformLocalToViewPoint(sB, 0, zB, u0, v0, su, sv, viewOri);
+    const B1 = transformLocalToViewPoint(sB, 1, zB, u0, v0, su, sv, viewOri);
+    const A1 = transformLocalToViewPoint(sA, 1, zA, u0, v0, su, sv, viewOri);
     const sA0 = isoToScreenPx(A0.x, A0.y, A0.z, originX, originY);
     const sB0 = isoToScreenPx(B0.x, B0.y, B0.z, originX, originY);
     const sB1 = isoToScreenPx(B1.x, B1.y, B1.z, originX, originY);
@@ -2454,8 +2639,15 @@ function renderArch(
     expandPt(sB0);
     expandPt(sB1);
     expandPt(sA1);
-    if (e.tag !== 'bottom') {
-      quads.push({ A0, sA0, B0, sB0, B1, sB1, A1, sA1, h0: e.h0, h1: e.h1, tag: e.tag });
+    const mappedTag: ExtrudedQuad['tag'] = flipZ
+      ? e.tag === 'bottom'
+        ? 'top_flat'
+        : e.tag === 'top_flat'
+          ? 'bottom'
+          : e.tag
+      : e.tag;
+    if (mappedTag !== 'bottom') {
+      quads.push({ A0, sA0, B0, sB0, B1, sB1, A1, sA1, h0: hA, h1: hB, tag: mappedTag });
     }
   }
 
@@ -2706,7 +2898,8 @@ function renderArch(
   const capSpanW = Math.max(1, Math.round(Math.abs(capX1 - capX0)));
 
   const capPoly: [number, number][] = cs.poly.map(([s, hFrac]) => {
-    const pt = transformLocalToViewPoint(s, lvCap, z0 + hFrac * heightPx, u0, v0, su, sv, viewOri);
+    const hUse = flipZ ? 1 - hFrac : hFrac;
+    const pt = transformLocalToViewPoint(s, lvCap, z0 + hUse * heightPx, u0, v0, su, sv, viewOri);
     return isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
   });
 
@@ -2885,9 +3078,13 @@ function renderMultiSectionColumn(
   viewOri: ViewRotation,
 ) {
   const isPoly = isPolygonalColumnShape(shape);
+  const flipZ = Boolean(shape.flipZ);
   const cylSamples = clamp(Math.round((su + sv) * 32), 48, 160);
   const zSteps = clamp(Math.ceil((z1 - z0) * 0.85), 20, 288);
-  const rings = buildColumnRings(shape, zSteps, cylSamples);
+  const rawRings = buildColumnRings(shape, zSteps, cylSamples);
+  const rings = flipZ
+    ? [...rawRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+    : rawRings;
   if (rings.length < 2) return;
 
   const numRings = rings.length;
@@ -3121,7 +3318,13 @@ function renderMultiSectionColumn(
               const fSpan = spanDt > 1e-5 ? clamp((tVal - spanT0) / spanDt, 0, 1) : 0;
               effFaceW = Math.max(1, Math.round(spanBotW + (spanTopW - spanBotW) * fSpan));
             }
-            const texCol = sampleFaceTextureRGBA(activeTexSlot, 1 - sVal, 1 - tVal, effFaceW, polyFaceTex.faceH);
+            const texCol = sampleFaceTextureRGBA(
+              activeTexSlot,
+              1 - sVal,
+              flipZ ? tVal : 1 - tVal,
+              effFaceW,
+              polyFaceTex.faceH,
+            );
             if (texCol) col = compositeFaceTexelOverBase(col, texCol, pixShadeFactor);
           } else if (isFlatUp && topFaceSpec) {
             const dx = scx - originX;
@@ -3474,6 +3677,7 @@ function renderShapeToBufferInner(
   if (heightPx <= 0) return;
 
   const triad = buildShadingTriad(shape);
+  const flipZ = Boolean(shape.flipZ);
 
   switch (shape.shapeType) {
     case 'box': {
@@ -3481,7 +3685,7 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, vb.ori);
+      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ);
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3490,7 +3694,7 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical');
+      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ);
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3503,17 +3707,17 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, vb.ori);
+      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, vb.ori, flipZ);
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
     case 'wedge': {
-      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.wedgeMode);
+      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.wedgeMode, flipZ);
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
     case 'pyramid': {
-      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, vb.ori);
+      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ);
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3533,7 +3737,8 @@ function renderShapeToBufferInner(
       renderCone(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
       break;
     }
-    case 'dome': {
+    case 'dome':
+    case 'sphere': {
       renderDomeOrSphere(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
       break;
     }
@@ -3570,7 +3775,12 @@ export function getShapeScreenBounds(
     if (x > maxX) maxX = x;
     if (y > maxY) maxY = y;
   }
-  if (shape.shapeType === 'cylinder' || shape.shapeType === 'cone' || shape.shapeType === 'dome') {
+  if (
+    shape.shapeType === 'cylinder' ||
+    shape.shapeType === 'cone' ||
+    shape.shapeType === 'dome' ||
+    shape.shapeType === 'sphere'
+  ) {
     const ru = su * 0.5;
     const rv = sv * 0.5;
     const [cx, cyBot] = isoToScreenPx(vb.u + ru, vb.v + rv, z0, originX, originY);
@@ -3658,22 +3868,23 @@ export function getPlanarFaceScreenOverlay(
   );
   const z0 = Math.round(shape.zPx);
   const z1 = z0 + Math.max(0, Math.round(shape.heightPx));
+  const flipZ = Boolean(shape.flipZ);
   let faces: MeshFace[] = [];
   switch (shape.shapeType) {
     case 'box':
-      faces = buildBoxFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori);
+      faces = buildBoxFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ);
       break;
     case 'right_tri_prism':
-      faces = buildRightTriPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical');
+      faces = buildRightTriPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ);
       break;
     case 'prism':
-      faces = buildPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, shape.prismSides, vb.ori);
+      faces = buildPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, shape.prismSides, vb.ori, flipZ);
       break;
     case 'wedge':
-      faces = buildWedgeFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.wedgeMode);
+      faces = buildWedgeFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.wedgeMode, flipZ);
       break;
     case 'pyramid':
-      faces = buildPyramidFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori);
+      faces = buildPyramidFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ);
       break;
   }
   const match = faces.find((f) => f.faceId === faceId);

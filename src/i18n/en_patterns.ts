@@ -10,7 +10,7 @@ export function registerInnerTranslator(fn: (s: string) => string) {
 export const EN_PATTERNS: PatternRule[] = [
   // App / Document / Project & auto-generated Layer names
   [
-    /^(立方体 \/ 长方体|直角三棱柱|拱形 \/ 拱券|圆柱体|曲面柱 \/ 平放拱 \(控制面\)|多棱柱|楔形 \/ 坡屋顶|四棱锥|圆锥体|穹顶 \/ 球体|TheoTown 绿地底座) (\d+)$/,
+    /^(立方体 \/ 长方体|直角三棱柱|拱形 \/ 拱券|圆柱体|曲面柱 \/ 平放拱 \(控制面\)|多棱柱|楔形 \/ 坡屋顶|四棱锥|圆锥体|穹顶 \/ 球体|球体 \/ 椭球体|TheoTown 绿地底座) (\d+)$/,
     (_, shape, n) => `${innerTr(shape)} ${n}`,
   ],
   [/^等距建筑 (\d+)$/, (_, n) => `Iso Building ${n}`],
@@ -80,6 +80,13 @@ export const EN_PATTERNS: PatternRule[] = [
     (_, su, sv, mu, mv, u, v) => `Plot Frame ${su}×${sv}c (${mu}×${mv}m) · Origin (${u}, ${v})`,
   ],
   [/^(.+) \(背面\)$/, (_, face) => `${innerTr(face)} (Back)`],
+  [
+    /^地面投影 · U:([\d.-]+) V:([\d.-]+) · 离地 (\d+)px \(([\d.]+)m\)$/,
+    (_, u, v, z, m) => `Ground Proj · U:${u} V:${v} · Z ${z}px (${m}m)`,
+  ],
+  [/^恢复默认网格线颜色 \((#[0-9A-F]{8})\)$/, (_, hex) => `Reset default grid line color (${hex})`],
+  [/^已恢复默认网格线颜色 \((#[0-9A-F]{8})\)$/, (_, hex) => `Reset grid line color to default (${hex})`],
+  [/^↺ 恢复默认网格色 \((#[0-9A-F]{8})\)$/, (_, hex) => `↺ Reset Grid Color (${hex})`],
 
   // Main topbar, status & toasts
   [/^撤销: (.+)$/, (_, l) => `Undo: ${innerTr(l)}`],

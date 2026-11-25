@@ -123,7 +123,7 @@ const VALID_BLENDS: ReadonlySet<string> = new Set([
 
 const VALID_SHAPES: ReadonlySet<string> = new Set([
   'box', 'right_tri_prism', 'arch', 'cylinder', 'loft',
-  'prism', 'wedge', 'pyramid', 'cone', 'dome', 'theotown_base',
+  'prism', 'wedge', 'pyramid', 'cone', 'dome', 'sphere', 'theotown_base',
 ]);
 
 const VALID_OUTLINES: ReadonlySet<string> = new Set(['none', 'outer', 'all_edges']);
@@ -294,6 +294,7 @@ export function getStudioState(app: App) {
           heightMeters: Math.round(zPxToMeters(s.heightPx) * 100) / 100,
           worldFootprint: wf,
           ori: s.ori,
+          flipZ: Boolean(s.flipZ),
           prismSides: s.prismSides,
           triPrismCut: s.triPrismCut,
           wedgeMode: s.wedgeMode,
@@ -1282,8 +1283,9 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
               zPx: targetLayer.shape.zPx,
               sizeU: targetLayer.shape.sizeU,
               sizeV: targetLayer.shape.sizeV,
-              heightPx: nextType === 'theotown_base' ? 0 : Math.max(4, targetLayer.shape.heightPx || 24),
+              heightPx: nextType === 'theotown_base' ? 0 : Math.max(4, targetLayer.shape.heightPx || (nextType === 'sphere' ? 18 : 24)),
               ori: targetLayer.shape.ori,
+              flipZ: nextType === 'theotown_base' ? undefined : targetLayer.shape.flipZ,
               baseColor: { ...targetLayer.shape.baseColor },
               roofColor: targetLayer.shape.roofColor ? { ...targetLayer.shape.roofColor } : null,
               autoShade: targetLayer.shape.autoShade,
@@ -1310,6 +1312,10 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
       if (zVal !== undefined) shape.zPx = clamp(Math.round(zVal), -128, 480);
 
       if (typeof cmd.ori === 'number') shape.ori = normalizeRotation(cmd.ori);
+      if (typeof cmd.flipZ === 'boolean') {
+        if (cmd.flipZ && shape.shapeType !== 'theotown_base') shape.flipZ = true;
+        else delete shape.flipZ;
+      }
       if (typeof cmd.prismSides === 'number') shape.prismSides = clamp(Math.round(cmd.prismSides), 3, 16);
       if (cmd.triPrismCut === 'vertical' || cmd.triPrismCut === 'slope') shape.triPrismCut = cmd.triPrismCut as TriPrismCut;
       if (cmd.wedgeMode === 'ramp' || cmd.wedgeMode === 'gable') shape.wedgeMode = cmd.wedgeMode;

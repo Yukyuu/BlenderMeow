@@ -771,7 +771,7 @@ export class BuilderDocument {
             continue;
           }
         }
-        if (s.shapeType === 'arch' && !(s.archHollow && s.archHollowStyle === 'portal')) {
+        if (s.shapeType === 'arch' && !(s.archHollow && s.archHollowStyle === 'portal') && !s.flipZ) {
           const su = Math.max(0.0625, s.sizeU);
           const sv = Math.max(0.0625, s.sizeV);
           const fu0 = Math.max(0, Math.min(1, (u - s.u) / su));
@@ -836,11 +836,12 @@ export class BuilderDocument {
             worldToLocal(u + eps, v + sizeV - eps),
             worldToLocal(u + sizeU * 0.5, v + sizeV * 0.5),
           ];
+          const loftFlip = Boolean(s.flipZ);
           const stackRes = evaluateHollowLoftStackElevation(
             s.loftSections,
             s.loftInterp ?? 'smooth',
-            Boolean(s.loftHollow),
-            s.loftFloorT ?? 0,
+            Boolean(s.loftHollow) && !(loftFlip && (s.loftFloorT ?? 0) > 0),
+            loftFlip ? 0 : (s.loftFloorT ?? 0),
             lsu,
             lsv,
             s.zPx,
@@ -853,7 +854,7 @@ export class BuilderDocument {
             }
             continue;
           }
-          maxTop = Math.max(maxTop, stackRes.topElevation);
+          maxTop = Math.max(maxTop, loftFlip ? s.zPx + s.heightPx : stackRes.topElevation);
           continue;
         }
         maxTop = Math.max(maxTop, s.zPx + s.heightPx);

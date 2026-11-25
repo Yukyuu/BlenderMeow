@@ -337,6 +337,7 @@ function renderConeShadowMask(
   sv: number,
   z0: number,
   z1: number,
+  flipZ: boolean,
   originX: number,
   originY: number,
 ) {
@@ -344,6 +345,7 @@ function renderConeShadowMask(
   const zMax = z1;
   const coneH = Math.max(1, z1 - z0);
   if (zMax <= 0 || zMin > zMax) return;
+  const zApex = flipZ ? z0 : z1;
 
   const cu = u0 + su * 0.5;
   const cv = v0 + sv * 0.5;
@@ -373,8 +375,8 @@ function renderConeShadowMask(
       const dx32 = dx / 32;
       const u0p = halfS + dx32;
       const v0p = halfS - dx32;
-      const Bz = (-u0p * iu + v0p * iv) / 16 + 2 * z1 * iH;
-      const Cz = u0p * u0p * iu + v0p * v0p * iv - z1 * z1 * iH;
+      const Bz = (-u0p * iu + v0p * iv) / 16 + 2 * zApex * iH;
+      const Cz = u0p * u0p * iu + v0p * v0p * iv - zApex * zApex * iH;
       const fMin = (Az * zMin + Bz) * zMin + Cz;
       const fMax = (Az * zMax + Bz) * zMax + Cz;
       let hit = fMin <= 1e-6 || fMax <= 1e-6;
@@ -403,6 +405,7 @@ function renderDomeShadowMask(
   z0: number,
   z1: number,
   isSphere: boolean,
+  flipZ: boolean,
   originX: number,
   originY: number,
 ) {
@@ -415,7 +418,7 @@ function renderDomeShadowMask(
   const ru = Math.max(1e-4, su * 0.5);
   const rv = Math.max(1e-4, sv * 0.5);
   const totalH = Math.max(1, z1 - z0);
-  const zCenter = isSphere ? z0 + totalH * 0.5 : z0;
+  const zCenter = isSphere ? z0 + totalH * 0.5 : flipZ ? z1 : z0;
   const rz = Math.max(0.5, isSphere ? totalH * 0.5 : totalH);
   const [cx0, cy0] = isoToScreenPx(cu, cv, 0, originX, originY);
 
@@ -490,9 +493,10 @@ function renderArchShadowMask(
   });
   if (cs.edges.length < 3 || cs.poly.length < 3) return;
 
+  const flipZ = Boolean(shape.flipZ);
   for (const e of cs.edges) {
-    const zA = z0 + e.h0 * heightPx;
-    const zB = z0 + e.h1 * heightPx;
+    const zA = z0 + (flipZ ? 1 - e.h0 : e.h0) * heightPx;
+    const zB = z0 + (flipZ ? 1 - e.h1 : e.h1) * heightPx;
     const A0 = transformLocalToViewPoint(e.s0, 0, zA, u0, v0, su, sv, viewOri);
     const B0 = transformLocalToViewPoint(e.s1, 0, zB, u0, v0, su, sv, viewOri);
     const B1 = transformLocalToViewPoint(e.s1, 1, zB, u0, v0, su, sv, viewOri);
@@ -503,7 +507,7 @@ function renderArchShadowMask(
 
   for (const lvCap of [0, 1]) {
     const poly3 = cs.poly.map(([s, hFrac]) =>
-      transformLocalToViewPoint(s, lvCap, z0 + hFrac * heightPx, u0, v0, su, sv, viewOri),
+      transformLocalToViewPoint(s, lvCap, z0 + (flipZ ? 1 - hFrac : hFrac) * heightPx, u0, v0, su, sv, viewOri),
     );
     const clipped = clipPoly3DZMin0(poly3);
     if (clipped.length >= 3) {
@@ -535,9 +539,11 @@ function renderLoftOrColumnShadowMask(
 ) {
   if (z1 <= 0) return;
 
+  const flipZ = Boolean(shape.flipZ);
   let rings: { t: number; pts: [number, number][] }[];
   let innerRings: { t: number; pts: [number, number][] }[] | null = null;
   let innerFloorRing: { t: number; pts: [number, number][] } | null = null;
+  let flippedSolidTop = false;
 
   if (isLoft) {
     const secs = normalizeLoftSections(shape.loftSections);
@@ -556,13 +562,27 @@ function renderLoftOrColumnShadowMask(
       lsv,
       shape.loftFloorT ?? 0,
     );
-    rings = res.rings;
-    innerRings = res.innerRings ?? null;
-    innerFloorRing = res.innerFloorRing ?? null;
+    rings = flipZ
+      ? [...res.rings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+      : res.rings;
+    innerRings = res.innerRings
+      ? flipZ
+        ? [...res.innerRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+        : res.innerRings
+      : null;
+    flippedSolidTop = flipZ && Boolean(res.innerFloorRing);
+    innerFloorRing = flipZ
+      ? res.innerFloorRing
+        ? { t: 1 - res.innerFloorRing.t, pts: res.innerFloorRing.pts }
+        : null
+      : res.innerFloorRing ?? null;
   } else {
     const cylSamples = clamp(Math.round((su + sv) * 32), 48, 160);
     const zSteps = clamp(Math.ceil((z1 - z0) * 0.85), 20, 288);
-    rings = buildColumnRings(shape, zSteps, cylSamples);
+    const rawRings = buildColumnRings(shape, zSteps, cylSamples);
+    rings = flipZ
+      ? [...rawRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+      : rawRings;
   }
 
   if (rings.length < 2) return;
@@ -606,7 +626,7 @@ function renderLoftOrColumnShadowMask(
   const topZ = z0 + rings[rings.length - 1].t * (z1 - z0);
   if (topZ >= 0) {
     const outerTop = projectRingShadow(outerViewRings[outerViewRings.length - 1]);
-    const innerTop = inViewRings ? projectRingShadow(inViewRings[inViewRings.length - 1]) : null;
+    const innerTop = inViewRings && !flippedSolidTop ? projectRingShadow(inViewRings[inViewRings.length - 1]) : null;
     rasterScanlinePolyMask(mask, w, h, outerTop, innerTop);
   }
 
@@ -661,6 +681,7 @@ export function renderShapeGroundShadowMask(
 
   const P = (lu: number, lv: number, z: number) =>
     transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
+  const flipZ = Boolean(shape.flipZ);
 
   switch (shape.shapeType) {
     case 'box': {
@@ -668,7 +689,7 @@ export function renderShapeGroundShadowMask(
         renderLoftOrColumnShadowMask(mask, w, h, u0, v0, su, sv, z0, z1, shape, originX, originY, ori, false);
         break;
       }
-      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, ori);
+      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, ori, flipZ);
       if (z0 >= 0) {
         faces.push({
           verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)],
@@ -684,13 +705,15 @@ export function renderShapeGroundShadowMask(
         break;
       }
       const cut = shape.triPrismCut ?? 'vertical';
-      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, ori, cut);
+      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, ori, cut, flipZ);
       if (z0 >= 0) {
         if (cut === 'slope') {
-          faces.push({
-            verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)],
-            kind: 'top',
-          });
+          if (!flipZ) {
+            faces.push({
+              verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)],
+              kind: 'top',
+            });
+          }
         } else {
           faces.push({
             verts: [P(0, 0, z0), P(1, 0, z0), P(0, 1, z0)],
@@ -706,7 +729,7 @@ export function renderShapeGroundShadowMask(
         renderLoftOrColumnShadowMask(mask, w, h, u0, v0, su, sv, z0, z1, shape, originX, originY, ori, false);
         break;
       }
-      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, ori);
+      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, ori, flipZ);
       if (z0 >= 0) {
         const n = Math.max(3, Math.min(12, Math.round(shape.prismSides)));
         const startAngle = Math.PI / n;
@@ -721,8 +744,8 @@ export function renderShapeGroundShadowMask(
       break;
     }
     case 'wedge': {
-      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, shape.wedgeMode);
-      if (z0 >= 0) {
+      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, shape.wedgeMode, flipZ);
+      if (z0 >= 0 && !flipZ) {
         faces.push({
           verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)],
           kind: 'top',
@@ -732,8 +755,8 @@ export function renderShapeGroundShadowMask(
       break;
     }
     case 'pyramid': {
-      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, ori);
-      if (z0 >= 0) {
+      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, ori, flipZ);
+      if (z0 >= 0 && !flipZ) {
         faces.push({
           verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)],
           kind: 'top',
@@ -751,10 +774,11 @@ export function renderShapeGroundShadowMask(
       break;
     }
     case 'cone': {
-      renderConeShadowMask(mask, w, h, u0, v0, su, sv, z0, z1, originX, originY);
+      renderConeShadowMask(mask, w, h, u0, v0, su, sv, z0, z1, flipZ, originX, originY);
       break;
     }
-    case 'dome': {
+    case 'dome':
+    case 'sphere': {
       renderDomeShadowMask(
         mask,
         w,
@@ -765,7 +789,8 @@ export function renderShapeGroundShadowMask(
         sv,
         z0,
         z1,
-        shape.domeMode === 'sphere',
+        shape.shapeType === 'sphere' || shape.domeMode === 'sphere',
+        flipZ,
         originX,
         originY,
       );
@@ -925,7 +950,12 @@ export function buildShapeSunShadowField(
       expandSunPt(sx, sy);
     }
   }
-  if (shape.shapeType === 'cylinder' || shape.shapeType === 'cone' || shape.shapeType === 'dome') {
+  if (
+    shape.shapeType === 'cylinder' ||
+    shape.shapeType === 'cone' ||
+    shape.shapeType === 'dome' ||
+    shape.shapeType === 'sphere'
+  ) {
     const ru = su * 0.5;
     const rv = sv * 0.5;
     const [cx0, cy0] = isoToScreenPx(u0 + ru, v0 + rv, 0, originX, originY);
@@ -1084,10 +1114,12 @@ export function buildShapeSunShadowField(
     }
   };
 
+  const flipZ = Boolean(shape.flipZ);
   const rasterLoftOrColumnField = (isLoft: boolean) => {
     let rings: { t: number; pts: [number, number][] }[];
     let innerRings: { t: number; pts: [number, number][] }[] | null = null;
     let innerFloorRing: { t: number; pts: [number, number][] } | null = null;
+    let flippedSolidTop = false;
     if (isLoft) {
       const secs = normalizeLoftSections(shape.loftSections);
       const sampleCount = clamp(Math.round((su + sv) * 36), 80, 256);
@@ -1103,13 +1135,27 @@ export function buildShapeSunShadowField(
         oddOri ? su : sv,
         shape.loftFloorT ?? 0,
       );
-      rings = res.rings;
-      innerRings = res.innerRings ?? null;
-      innerFloorRing = res.innerFloorRing ?? null;
+      rings = flipZ
+        ? [...res.rings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+        : res.rings;
+      innerRings = res.innerRings
+        ? flipZ
+          ? [...res.innerRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+          : res.innerRings
+        : null;
+      flippedSolidTop = flipZ && Boolean(res.innerFloorRing);
+      innerFloorRing = flipZ
+        ? res.innerFloorRing
+          ? { t: 1 - res.innerFloorRing.t, pts: res.innerFloorRing.pts }
+          : null
+        : res.innerFloorRing ?? null;
     } else {
       const cylSamples = clamp(Math.round((su + sv) * 32), 48, 160);
       const zSteps = clamp(Math.ceil((z1 - z0) * 0.85), 20, 288);
-      rings = buildColumnRings(shape, zSteps, cylSamples);
+      const rawRings = buildColumnRings(shape, zSteps, cylSamples);
+      rings = flipZ
+        ? [...rawRings].reverse().map((r) => ({ t: 1 - r.t, pts: r.pts }))
+        : rawRings;
     }
     if (rings.length < 2 || rings[0].pts.length < 3) return;
     const vertCount = rings[0].pts.length;
@@ -1145,7 +1191,7 @@ export function buildShapeSunShadowField(
     const topZ = z0 + rings[rings.length - 1].t * (z1 - z0);
     rasterScanlinePolyZ(
       proj(outerV[outerV.length - 1]),
-      inV ? proj(inV[inV.length - 1]) : null,
+      inV && !flippedSolidTop ? proj(inV[inV.length - 1]) : null,
       () => topZ,
     );
     const botZ = z0 + rings[0].t * (z1 - z0);
@@ -1166,7 +1212,7 @@ export function buildShapeSunShadowField(
         rasterLoftOrColumnField(false);
         break;
       }
-      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, ori);
+      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, ori, flipZ);
       faces.push({ verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)], kind: 'top' });
       rasterPolyFacesSunField(faces);
       break;
@@ -1177,13 +1223,15 @@ export function buildShapeSunShadowField(
         break;
       }
       const cut = shape.triPrismCut ?? 'vertical';
-      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, ori, cut);
-      faces.push({
-        verts: cut === 'slope'
-          ? [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)]
-          : [P(0, 0, z0), P(1, 0, z0), P(0, 1, z0)],
-        kind: 'top',
-      });
+      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, ori, cut, flipZ);
+      if (cut !== 'slope' || !flipZ) {
+        faces.push({
+          verts: cut === 'slope'
+            ? [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)]
+            : [P(0, 0, z0), P(1, 0, z0), P(0, 1, z0)],
+          kind: 'top',
+        });
+      }
       rasterPolyFacesSunField(faces);
       break;
     }
@@ -1192,7 +1240,7 @@ export function buildShapeSunShadowField(
         rasterLoftOrColumnField(false);
         break;
       }
-      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, ori);
+      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, ori, flipZ);
       const n = Math.max(3, Math.min(12, Math.round(shape.prismSides)));
       const startAngle = Math.PI / n;
       const bot: Vec3[] = [];
@@ -1205,14 +1253,18 @@ export function buildShapeSunShadowField(
       break;
     }
     case 'wedge': {
-      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, shape.wedgeMode);
-      faces.push({ verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)], kind: 'top' });
+      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, shape.wedgeMode, flipZ);
+      if (!flipZ) {
+        faces.push({ verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)], kind: 'top' });
+      }
       rasterPolyFacesSunField(faces);
       break;
     }
     case 'pyramid': {
-      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, ori);
-      faces.push({ verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)], kind: 'top' });
+      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, ori, flipZ);
+      if (!flipZ) {
+        faces.push({ verts: [P(0, 0, z0), P(1, 0, z0), P(1, 1, z0), P(0, 1, z0)], kind: 'top' });
+      }
       rasterPolyFacesSunField(faces);
       break;
     }
@@ -1259,6 +1311,7 @@ export function buildShapeSunShadowField(
     }
     case 'cone': {
       const coneH = Math.max(1, z1 - z0);
+      const zApex = flipZ ? z0 : z1;
       const cu = u0 + su * 0.5;
       const cv = v0 + sv * 0.5;
       const ru = Math.max(1e-4, su * 0.5);
@@ -1276,8 +1329,8 @@ export function buildShapeSunShadowField(
           const dx32 = dx / 32;
           const u0p = halfS + dx32;
           const v0p = halfS - dx32;
-          const Bz = (-u0p * iu + v0p * iv) / 16 + 2 * z1 * iH;
-          const Cz = u0p * u0p * iu + v0p * v0p * iv - z1 * z1 * iH;
+          const Bz = (-u0p * iu + v0p * iv) / 16 + 2 * zApex * iH;
+          const Cz = u0p * u0p * iu + v0p * v0p * iv - zApex * zApex * iH;
           if (Math.abs(Az) < 1e-9) {
             if (Math.abs(Bz) <= 1e-9) {
               if (Cz <= 1e-6) recordZ(lx, ly, z0, z1);
@@ -1320,10 +1373,11 @@ export function buildShapeSunShadowField(
       }
       break;
     }
-    case 'dome': {
-      const isSphere = shape.domeMode === 'sphere';
+    case 'dome':
+    case 'sphere': {
+      const isSphere = shape.shapeType === 'sphere' || shape.domeMode === 'sphere';
       const totalH = Math.max(1, z1 - z0);
-      const zCenter = isSphere ? z0 + totalH * 0.5 : z0;
+      const zCenter = isSphere ? z0 + totalH * 0.5 : flipZ ? z1 : z0;
       const rz = Math.max(0.5, isSphere ? totalH * 0.5 : totalH);
       const cu = u0 + su * 0.5;
       const cv = v0 + sv * 0.5;
@@ -1374,8 +1428,8 @@ export function buildShapeSunShadowField(
       });
       if (cs.edges.length < 3 || cs.poly.length < 3) break;
       for (const e of cs.edges) {
-        const zA = z0 + e.h0 * heightPx;
-        const zB = z0 + e.h1 * heightPx;
+        const zA = z0 + (flipZ ? 1 - e.h0 : e.h0) * heightPx;
+        const zB = z0 + (flipZ ? 1 - e.h1 : e.h1) * heightPx;
         const A0 = P(e.s0, 0, zA);
         const B0 = P(e.s1, 0, zB);
         const B1 = P(e.s1, 1, zB);
@@ -1385,7 +1439,7 @@ export function buildShapeSunShadowField(
       }
       for (const lvCap of [0, 1]) {
         const polySun = cs.poly.map(([s, hFrac]) =>
-          projectPointToGroundShadow(P(s, lvCap, z0 + hFrac * heightPx), originX, originY),
+          projectPointToGroundShadow(P(s, lvCap, z0 + (flipZ ? 1 - hFrac : hFrac) * heightPx), originX, originY),
         );
         if (ori % 2 === 0) {
           const fv = ori === 0 ? lvCap : 1 - lvCap;

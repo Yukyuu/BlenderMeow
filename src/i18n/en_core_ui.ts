@@ -21,8 +21,22 @@ export const EN_CORE_UI: Record<string, string> = {
   '🌐 复制地址': '🌐 Copy URL',
   '↗ 打开在线版': '↗ Open Online',
   '已复制 Pixel Meow 在线版地址': 'Copied Pixel Meow Online URL',
+  '🤖 安卓应用下载': '🤖 Android App Download',
+  '已复制安卓应用下载链接': 'Copied Android app download URL',
   '🌐 使用在线版': '🌐 Use Online Edition',
   '已切换为 Pixel Meow 在线版地址': 'Switched to Pixel Meow Online URL',
+  '球体/椭球体工具、形状上下翻转、地面投影工具与自定义网格线颜色':
+    'Sphere / Ellipsoid Tool, Vertical Flip, Ground Projection & Custom Grid Color',
+  '新增「球体 / 椭球体」独立形状工具：左侧形状栏与参数检查器新增独立球体预设，支持独立调节 U 宽度、V 深度与立体高度塑造任意三轴椭球，提供「正球高度 / 扁椭球 / 长椭球」快捷比例预设，完整支持解析曲面光影、四视角旋转闭合、地面阴影与体块间投影。':
+    'Added standalone "Sphere / Ellipsoid" shape tool in the sidebar and inspector: adjust U width, V depth, and height independently for any triaxial ellipsoid, with quick Sphere / Oblate / Prolate height presets plus full analytical curved shading, 4-view rotation closure, ground shadows, and inter-block cast shadows.',
+  '支持各类 3D 形状上下翻转（倒置）：在右侧「形状修改」检查器与选择工具顶部快捷条新增「↕ 上下翻转」开关，支持四棱锥、圆锥体、半球穹顶、楔形/人字屋顶、水平直角三棱柱、实心/镂空拱形、曲面柱与多截面柱体一键倒置（自动暴露倒置顶面、反转法线受光并同步更新地面与体块阴影）。':
+    'Added vertical flip (upside-down) for 3D shapes via the Shape Inspector and Select tool bar: cleanly inverts pyramids, cones, hemispheres/domes, ramps & gable roofs, sloped right tri-prisms, solid/hollow arches, lofts, and multi-section columns with accurate inverted top caps, surface normals, and ground/inter-block shadows.',
+  '新增「地面投影」定位辅助工具：在顶部工具栏、选择工具快捷条及设置中可随时开关（快捷键 Alt+P），选中离地（Z > 0）的 3D 图形时实时在 Z = 0 地面绘制精确轮廓投影、垂直落点虚线、中心准星与 U/V/离地高度标牌，大幅提升悬空体块与多层建筑对位效率。':
+    'Added Ground Projection alignment overlay (topbar, Select bar, Settings & Alt+P): when an elevated 3D shape (Z > 0) is selected, draws its exact Z=0 projected footprint, vertical drop lines, center crosshair, and U/V/elevation badge live on canvas.',
+  '新增网格线自定义颜色设置：在设置弹窗「网格线设置」中接入应用内置 Pixel Meow 同款专业选色器（支持实时预览、不透明度滑条与一键恢复默认色），告别系统原生取色框。':
+    'Added Grid Line Settings using the app’s built-in Pixel Meow-style color picker (with live canvas preview, opacity slider, and one-click reset — no system native color inputs).',
+  '更新日志页面与关于卡片新增安卓应用 Releases 官方下载直达链接（https://github.com/Yukyuu/BlenderMeow/releases/）与一键复制按钮。':
+    'Added direct Android Releases download link (https://github.com/Yukyuu/BlenderMeow/releases/) with one-click copy button to the Changelog dialog and About card.',
   '完善英文模式下的新建图层与实体自动命名':
     'Localized Auto-Naming for New Layers & Entities in English Mode',
   '修复英文界面下新建 3D 图形图层、复制图层、新建项目、默认绿地底座、导入参考图/PSD、曲面与柱体控制面以及自定义贴图时仍自动生成中文名称的问题，现已全面随当前语言自动命名。':
@@ -120,6 +134,8 @@ export const EN_CORE_UI: Record<string, string> = {
   '四棱锥': 'Pyramid',
   '圆锥体': 'Cone',
   '穹顶 / 球体': 'Dome / Sphere',
+  '穹顶 / 半球': 'Dome / Hemisphere',
+  '球体 / 椭球体': 'Sphere / Ellipsoid',
   'TheoTown 绿地底座': 'TheoTown Grass Base',
 
   // Loft inner modes & presets
@@ -232,7 +248,38 @@ export const EN_CORE_UI: Record<string, string> = {
   '曲面柱': 'Loft',
   '坡屋顶': 'Wedge',
   '穹顶球': 'Dome',
+  '穹顶': 'Dome',
+  '球体': 'Sphere',
   '绿底座': 'Grass Base',
+  '显隐离地选中图形的地面投影位置': 'Toggle Ground Projection for Elevated Shape',
+  '显隐离地选中图形的地面投影': 'Toggle Ground Projection for Elevated Shape',
+  '📍 已开启地面投影（选中离地 Z > 0 的图形时自动显示其地面投影位置）':
+    '📍 Ground projection ON (displays Z=0 footprint when selected shape has Z > 0)',
+  '已关闭地面投影': 'Ground projection OFF',
+  '📍 地面投影': '📍 Ground Proj',
+  '📍 显示离地选中图形的地面投影位置': '📍 Show ground projection for elevated selected shapes',
+  '网格线设置': 'Grid Line Settings',
+  '高倍缩放显示 1px 像素网格': 'Show 1px Pixel Grid at High Zoom',
+  '网格线颜色': 'Grid Line Color',
+  '网格线不透明度 (%)': 'Grid Line Opacity (%)',
+  '按当前 U/V 宽度匹配正球体高度 (1格 = 18px)': 'Match perfect sphere height from U/V width (1 cell = 18px)',
+  '匹配正球体比例': 'Match Sphere Ratio',
+  '⚪ 正球高度 (1:1)': '⚪ Sphere H (1:1)',
+  '将高度设为扁平椭球比例 (0.5×)': 'Set height to oblate ellipsoid ratio (0.5×)',
+  '设为扁椭球': 'Set Oblate Ellipsoid',
+  '🛸 扁椭球 (0.5×)': '🛸 Oblate (0.5×)',
+  '将高度设为竖直长椭球比例 (1.5×)': 'Set height to prolate ellipsoid ratio (1.5×)',
+  '设为长椭球': 'Set Prolate Ellipsoid',
+  '🥚 长椭球 (1.5×)': '🥚 Prolate (1.5×)',
+  '提示：独立调整 U 宽度、V 深度与立体高度即可自由塑造任意三轴椭球体。':
+    'Tip: Adjust U width, V depth, and height independently to sculpt any triaxial ellipsoid.',
+  '↕ 上下翻转（倒置形状）': '↕ Flip Vertically (Upside-Down)',
+  '上下翻转图形': 'Flip Shape Vertically',
+  '恢复图形正向': 'Restore Upright Orientation',
+  '将当前选中图形上下翻转（倒置）': 'Flip active shape vertically (upside-down)',
+  '↕ 已将当前图形上下翻转': '↕ Flipped shape vertically',
+  '↕ 已恢复图形正向': '↕ Restored upright orientation',
+  '↕ 上下翻转': '↕ Flip Z',
   '填入具体数值参数直接生成图形': 'Create shape with exact numeric parameters',
   '填参数': 'Params',
   '↔ 水平拖拽 (U/V)': '↔ Horizontal (U/V)',

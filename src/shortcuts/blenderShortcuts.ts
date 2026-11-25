@@ -275,6 +275,14 @@ export const BLENDER_SHORTCUT_ACTIONS: ShortcutActionDef[] = [
     defaultBindings: [{ code: 'KeyG', alt: true }],
   },
   {
+    id: 'view.toggleGroundProjection',
+    category: 'tools',
+    label: '显隐离地选中图形的地面投影',
+    kind: 'trigger',
+    scope: 'workspace',
+    defaultBindings: [{ code: 'KeyP', alt: true }],
+  },
+  {
     id: 'view.toggleSnap',
     category: 'tools',
     label: '开启 / 关闭网格吸附',

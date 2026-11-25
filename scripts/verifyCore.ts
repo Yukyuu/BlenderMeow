@@ -59,6 +59,7 @@ import {
   type ShapeKind,
 } from '../src/core/isoRenderer';
 import {
+  ANDROID_RELEASES_URL,
   APP_AUTHOR,
   APP_LICENSE_NAME,
   MIT_LICENSE_TEXT,
@@ -118,7 +119,7 @@ import { deserializeBmeowProject, serializeBmeowProject } from '../src/core/expo
 import { History } from '../src/core/history';
 import { exportBuilderPsd, exportFourViewLayersPsd } from '../src/core/psd';
 import { projectRulerPoint3D, resolveConstrainedRulerPoint3D } from '../src/core/rulerTool';
-import { RulerPoint3D, App } from '../src/app';
+import { DEFAULT_ISO_GRID_COLOR, RulerPoint3D, App } from '../src/app';
 import { executeAiStudioCommand, getStudioState } from '../src/core/aiStudioOps';
 import {
   ShortcutManager,
@@ -4786,8 +4787,9 @@ function testV145I18nAndBrandMetadata() {
   assert.ok(MIT_LICENSE_TEXT.includes('MIT License'), 'MIT_LICENSE_TEXT must contain MIT License');
   assert.ok(MIT_LICENSE_TEXT.includes('yukyuu'), 'MIT_LICENSE_TEXT must credit yukyuu');
   assert.equal(PIXEL_MEOW_ONLINE_URL, 'https://pixelmeow.9rm.uk/', 'Pixel Meow Online URL must match');
-  assert.equal(APP_VERSION, '1.4.6', 'APP_VERSION must be 1.4.6');
-  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.6', 'Latest changelog entry must be 1.4.6');
+  assert.equal(ANDROID_RELEASES_URL, 'https://github.com/Yukyuu/BlenderMeow/releases/', 'Android Releases URL must match');
+  assert.equal(APP_VERSION, '1.4.7', 'APP_VERSION must be 1.4.7');
+  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.7', 'Latest changelog entry must be 1.4.7');
 
   const licenseFile = fs.readFileSync(path.resolve(process.cwd(), 'LICENSE'), 'utf8');
   assert.ok(licenseFile.includes('MIT License') && licenseFile.includes('yukyuu'), 'Root LICENSE file must contain MIT License and yukyuu');
@@ -4913,6 +4915,326 @@ function testV145I18nAndBrandMetadata() {
   console.log('PASS: v1.4.6 English i18n coverage, localized layer/entity auto-naming, Top-Left Brand Menu, MIT License (yukyuu) & Pixel Meow Online URL');
 }
 
+async function testV147Features() {
+  const CJK_RE = /[\u4e00-\u9fff]/;
+
+  // 1. Sphere / Ellipsoid standalone shape tool (triaxial ellipsoid, 0-AA, smooth shading, 4x90deg closure, shadow, .bmeow, MCP)
+  const docEll = new BuilderDocument(256, 256, 4, 3, 16);
+  docEll.groundShadow.enabled = true;
+  docEll.groundShadow.interBlockEnabled = true;
+  const ellipsoid = createDefaultShape('sphere', {
+    u: 1,
+    v: 0.5,
+    zPx: 12,
+    sizeU: 2,
+    sizeV: 1,
+    heightPx: 26,
+    baseColor: { r: 140, g: 175, b: 220, a: 255 },
+  });
+  const ellLayer = new BuilderLayer(256, 256, 'Ellipsoid', 'shape', ellipsoid);
+  docEll.layers.push(ellLayer);
+  docEll.rerenderAllShapes();
+
+  const ell0 = docEll.renderToBuffer();
+  const ellStats = countPixels(ellLayer.data);
+  assert.ok(ellStats.solid > 400, `Ellipsoid must render substantial solid pixels (got ${ellStats.solid})`);
+  assert.equal(ellStats.semiTransparent, 0, 'Ellipsoid must have 0 semi-transparent pixels');
+  const ellTones = new Set<number>();
+  for (let i = 0; i < ellLayer.data.length; i += 4) {
+    if (ellLayer.data[i + 3] === 255) {
+      ellTones.add((ellLayer.data[i] << 16) | (ellLayer.data[i + 1] << 8) | ellLayer.data[i + 2]);
+    }
+  }
+  assert.ok(ellTones.size > 12, `Ellipsoid smooth shading should yield >12 distinct tones (got ${ellTones.size})`);
+
+  // Ground shadow for elevated ellipsoid must exist
+  const { originX: eOx, originY: eOy } = docEll.getViewOrigin();
+  const ellMask = new Uint8Array(256 * 256);
+  renderShapeGroundShadowMask(ellMask, 256, 256, ellipsoid, docEll.plotU, docEll.plotV, 0, eOx, eOy);
+  let ellShadowPx = 0;
+  for (let i = 0; i < ellMask.length; i++) if (ellMask[i]) ellShadowPx++;
+  assert.ok(ellShadowPx > 300, `Ellipsoid must cast ground shadow (got ${ellShadowPx}px)`);
+
+  // 4x90deg rotation closure on non-square plot for triaxial ellipsoid
+  docEll.rotateView(1);
+  const ell90 = docEll.renderToBuffer();
+  assert.ok(!buffersEqual(ell90, ell0), 'Non-square ellipsoid 90deg view should differ from 0deg');
+  docEll.rotateView(1);
+  docEll.rotateView(1);
+  docEll.rotateView(1);
+  assert.ok(buffersEqual(docEll.renderToBuffer(), ell0), 'Triaxial ellipsoid must close pixel-for-pixel after 4x90deg rotations');
+
+  // .bmeow round-trip for sphere
+  const ellSaved = serializeBmeowProject(docEll, 'EllProj');
+  const { doc: ellRestored } = await deserializeBmeowProject(ellSaved);
+  assert.equal(ellRestored.layers[0]?.shape?.shapeType, 'sphere');
+  assert.ok(buffersEqual(ellRestored.renderToBuffer(), ell0), 'Restored ellipsoid must match original bit-for-bit');
+
+  // 2. Vertical Flip (flipZ) across all asymmetric 3D primitives
+  const measureRowWidth = (buf: Uint8ClampedArray, w: number, h: number) => {
+    let minY = h;
+    let maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (buf[(y * w + x) * 4 + 3] > 0) {
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const bandAt = (frac: number) => {
+      const y = Math.round(minY + (maxY - minY) * frac);
+      let cnt = 0;
+      for (let x = 0; x < w; x++) if (buf[(y * w + x) * 4 + 3] > 0) cnt++;
+      return cnt;
+    };
+    return { topBandW: bandAt(0.22), botBandW: bandAt(0.78), minY, maxY };
+  };
+
+  const flipCases: Array<{
+    name: string;
+    shape: ReturnType<typeof createDefaultShape>;
+    expectWiderTopWhenFlipped?: boolean;
+  }> = [
+    {
+      name: 'pyramid',
+      shape: createDefaultShape('pyramid', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 32 }),
+      expectWiderTopWhenFlipped: true,
+    },
+    {
+      name: 'cone',
+      shape: createDefaultShape('cone', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 32 }),
+      expectWiderTopWhenFlipped: true,
+    },
+    {
+      name: 'dome',
+      shape: createDefaultShape('dome', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 28, domeMode: 'dome' }),
+      expectWiderTopWhenFlipped: true,
+    },
+    {
+      name: 'wedge_ramp',
+      shape: createDefaultShape('wedge', { u: 1, v: 1, sizeU: 2, sizeV: 1.5, heightPx: 26, wedgeMode: 'ramp' }),
+    },
+    {
+      name: 'wedge_gable',
+      shape: createDefaultShape('wedge', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 26, wedgeMode: 'gable' }),
+    },
+    {
+      name: 'tri_slope',
+      shape: createDefaultShape('right_tri_prism', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 26, triPrismCut: 'slope' }),
+    },
+    {
+      name: 'arch_hollow',
+      shape: createDefaultShape('arch', { u: 1, v: 1, sizeU: 2, sizeV: 1.5, heightPx: 28, archHollow: true, archHollowStyle: 'shell' }),
+    },
+    {
+      name: 'arch_portal',
+      shape: createDefaultShape('arch', { u: 1, v: 1, sizeU: 2, sizeV: 1.5, heightPx: 28, archHollow: true, archHollowStyle: 'portal' }),
+    },
+    {
+      name: 'loft_taper',
+      shape: createDefaultShape('loft', {
+        u: 1,
+        v: 1,
+        sizeU: 2,
+        sizeV: 2,
+        heightPx: 34,
+        loftHollow: true,
+        loftFloorT: 0.25,
+        loftSections: [
+          { id: 'f0', name: 'Bot', t: 0, scale: 1.2, twistDeg: 0, offsetU: 0, offsetV: 0, nodes: createLoftPresetNodes('square') },
+          { id: 'f1', name: 'Top', t: 1, scale: 0.45, twistDeg: 20, offsetU: 0, offsetV: 0, nodes: createLoftPresetNodes('circle') },
+        ],
+      }),
+      expectWiderTopWhenFlipped: true,
+    },
+    {
+      name: 'col_taper',
+      shape: (() => {
+        const s = createDefaultShape('box', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 32 });
+        const secs = ensureColumnSections(s);
+        applyColumnSectionTransform(secs[1], { scale: 0.45 });
+        return s;
+      })(),
+      expectWiderTopWhenFlipped: true,
+    },
+  ];
+
+  for (const fc of flipCases) {
+    const upDoc = new BuilderDocument(256, 256, 4, 3, 16);
+    upDoc.groundShadow.enabled = true;
+    const upShape = cloneShape(fc.shape);
+    delete upShape.flipZ;
+    const upLayer = new BuilderLayer(256, 256, `${fc.name}_up`, 'shape', upShape);
+    upDoc.layers.push(upLayer);
+    upDoc.rerenderAllShapes();
+
+    const flDoc = new BuilderDocument(256, 256, 4, 3, 16);
+    flDoc.groundShadow.enabled = true;
+    flDoc.groundShadow.interBlockEnabled = true;
+    const flShape = cloneShape(fc.shape);
+    flShape.flipZ = true;
+    const flLayer = new BuilderLayer(256, 256, `${fc.name}_flip`, 'shape', flShape);
+    flDoc.layers.push(flLayer);
+    flDoc.rerenderAllShapes();
+
+    const flStats = countPixels(flLayer.data);
+    assert.ok(flStats.solid > 100, `Flipped ${fc.name} must render solid pixels (got ${flStats.solid})`);
+    assert.equal(flStats.semiTransparent, 0, `Flipped ${fc.name} must have 0 AA pixels`);
+    assert.ok(!buffersEqual(flLayer.data, upLayer.data), `Flipped ${fc.name} must differ visually from upright`);
+
+    if (fc.expectWiderTopWhenFlipped) {
+      const upBands = measureRowWidth(upLayer.data, 256, 256);
+      const flBands = measureRowWidth(flLayer.data, 256, 256);
+      assert.ok(
+        upBands.botBandW > upBands.topBandW,
+        `Upright ${fc.name} expected wider bottom than top (${upBands.botBandW} vs ${upBands.topBandW})`,
+      );
+      assert.ok(
+        flBands.topBandW > flBands.botBandW,
+        `Flipped ${fc.name} expected wider top than bottom (${flBands.topBandW} vs ${flBands.botBandW})`,
+      );
+    }
+
+    // Ground shadow mask must exist and differ for asymmetric vertical shapes
+    const { originX: ox, originY: oy } = flDoc.getViewOrigin();
+    const mUp = new Uint8Array(256 * 256);
+    const mFl = new Uint8Array(256 * 256);
+    renderShapeGroundShadowMask(mUp, 256, 256, upShape, flDoc.plotU, flDoc.plotV, 0, ox, oy);
+    renderShapeGroundShadowMask(mFl, 256, 256, flShape, flDoc.plotU, flDoc.plotV, 0, ox, oy);
+    let flShPx = 0;
+    let diffShPx = 0;
+    for (let i = 0; i < mFl.length; i++) {
+      if (mFl[i]) flShPx++;
+      if (mFl[i] !== mUp[i]) diffShPx++;
+    }
+    assert.ok(flShPx > 50, `Flipped ${fc.name} must cast ground shadow`);
+    assert.ok(diffShPx > 20, `Flipped ${fc.name} ground shadow should reflect inverted geometry (diff=${diffShPx})`);
+
+    // 4x90deg pixel-for-pixel rotation closure on non-square plot
+    const fl0 = flDoc.renderToBuffer();
+    for (let r = 0; r < 4; r++) flDoc.rotateView(1);
+    assert.ok(buffersEqual(flDoc.renderToBuffer(), fl0), `Flipped ${fc.name} must close pixel-for-pixel after 4x90deg rotations`);
+
+    // .bmeow round-trip
+    const flJson = serializeBmeowProject(flDoc, `Flip_${fc.name}`);
+    assert.ok(flJson.includes('"flipZ": true'), `Flipped ${fc.name} .bmeow JSON must persist flipZ: true`);
+    const { doc: flRestored } = await deserializeBmeowProject(flJson);
+    assert.equal(flRestored.layers[0]?.shape?.flipZ, true);
+    assert.ok(buffersEqual(flRestored.renderToBuffer(), fl0), `Restored flipped ${fc.name} must match bit-for-bit`);
+  }
+
+  // Flipped pyramid & wedge expose visible flat 'top' planar face
+  const flPyr = createDefaultShape('pyramid', { u: 1, v: 1, sizeU: 2, sizeV: 2, heightPx: 28, flipZ: true });
+  const flPyrFaces = getPlanarFacesForShape(flPyr);
+  assert.ok(flPyrFaces.some((f) => f.id === 'top'), 'Flipped pyramid must expose top planar face');
+  const flPyrTopOv = getPlanarFaceScreenOverlay(flPyr, 'top', 4, 4, 0, 128, 128);
+  assert.ok(flPyrTopOv && flPyrTopOv.visible, 'Flipped pyramid top planar face must be visible');
+
+  // 3. MCP upsert_shape supports sphere & flipZ
+  const mcpApp = new App();
+  mcpApp.newDocument(192, 192, 4, 4, 'V147Mcp', false, true);
+  const mcpCtx = { app: mcpApp, refreshAll: () => {}, fitView: () => {}, requestRender: () => {} };
+  await executeAiStudioCommand(mcpCtx, {
+    kind: 'upsert_shape',
+    mode: 'create',
+    name: 'FloatingSphere',
+    shapeType: 'sphere',
+    u: 1,
+    v: 1,
+    sizeU: 1.5,
+    sizeV: 1,
+    zPx: 16,
+    heightPx: 24,
+  });
+  await executeAiStudioCommand(mcpCtx, {
+    kind: 'upsert_shape',
+    mode: 'create',
+    name: 'InvertedCone',
+    shapeType: 'cone',
+    u: 2,
+    v: 2,
+    sizeU: 1,
+    sizeV: 1,
+    zPx: 0,
+    heightPx: 24,
+    flipZ: true,
+  });
+  const st = getStudioState(mcpApp);
+  const spL = st.layers.find((l) => l.name === 'FloatingSphere');
+  const cnL = st.layers.find((l) => l.name === 'InvertedCone');
+  assert.equal(spL?.shape?.shapeType, 'sphere');
+  assert.equal(cnL?.shape?.flipZ, true);
+
+  // 4. Settings defaults for Ground Projection & Custom Grid Color + Zero native <input type="color"> anywhere in src/
+  assert.equal(mcpApp.settings.showGroundProjection, true, 'showGroundProjection must default to true');
+  assert.deepEqual(mcpApp.settings.isoGridColor, DEFAULT_ISO_GRID_COLOR, 'isoGridColor must default to DEFAULT_ISO_GRID_COLOR');
+  assert.equal(toHex8(DEFAULT_ISO_GRID_COLOR), '#A855F73D');
+
+  const srcDir = path.resolve(process.cwd(), 'src');
+  const walkTs = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) out.push(...walkTs(full));
+      else if (ent.name.endsWith('.ts')) out.push(full);
+    }
+    return out;
+  };
+  for (const file of walkTs(srcDir)) {
+    const code = fs.readFileSync(file, 'utf8');
+    assert.ok(
+      !/type\s*[:=]\s*['"]color['"]/.test(code),
+      `Native system color input forbidden (must use built-in Pixel Meow picker): found in ${file}`,
+    );
+  }
+
+  // 5. Android Releases link in changelogDialog.ts & v1.4.7 English i18n zero-CJK check
+  const changelogSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/ui/changelogDialog.ts'), 'utf8');
+  assert.ok(changelogSrc.includes('ANDROID_RELEASES_URL'), 'changelogDialog.ts must render ANDROID_RELEASES_URL');
+
+  try {
+    setLanguageSetting('en');
+    const v147Samples = [
+      '球体 / 椭球体',
+      '球体 / 椭球体 3',
+      '球体',
+      '穹顶',
+      '穹顶 / 半球',
+      '⚪ 正球高度 (1:1)',
+      '🛸 扁椭球 (0.5×)',
+      '🥚 长椭球 (1.5×)',
+      '↕ 上下翻转（倒置形状）',
+      '↕ 上下翻转',
+      '📍 地面投影',
+      '显隐离地选中图形的地面投影位置',
+      '📍 显示离地选中图形的地面投影位置',
+      '地面投影 · U:1.5 V:2 · 离地 18px (9.60m)',
+      '网格线设置',
+      '高倍缩放显示 1px 像素网格',
+      '网格线颜色',
+      '网格线不透明度 (%)',
+      '↺ 恢复默认网格色 (#A855F73D)',
+      '已恢复默认网格线颜色 (#A855F73D)',
+      '🤖 安卓应用下载',
+      '已复制安卓应用下载链接',
+    ];
+    for (const s of v147Samples) {
+      const out = tr(s);
+      assert.ok(!CJK_RE.test(out), `[v1.4.7 en i18n] CJK leaked: "${s}" -> "${out}"`);
+    }
+    assert.equal(tr('球体 / 椭球体 3'), 'Sphere / Ellipsoid 3');
+    assert.equal(
+      tr('地面投影 · U:1.5 V:2 · 离地 18px (9.60m)'),
+      'Ground Proj · U:1.5 V:2 · Z 18px (9.60m)',
+    );
+  } finally {
+    setLanguageSetting('zh');
+  }
+
+  console.log('PASS: v1.4.7 features (Sphere/Ellipsoid tool, vertical flip across all shapes, Ground Projection, custom built-in Grid Color picker & Android Releases link)');
+}
+
 async function main() {
   testRotationClosure();
   testTheoTownRuler();
@@ -4941,6 +5263,7 @@ async function main() {
   await testExperimentalInterBlockShadow();
   await testOpusV14xReviewFixes();
   testV145I18nAndBrandMetadata();
+  await testV147Features();
   console.log('ALL CORE CHECKS PASSED');
 }
 

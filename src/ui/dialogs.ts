@@ -1,5 +1,6 @@
 // Dialogs: Project Home, New Canvas & Plot, Save/Export (PSD/PNG/4-View/bmeow), Send to Pixel Meow, Settings & Theme
-import type { App } from '../app';
+import { DEFAULT_ISO_GRID_COLOR, type App } from '../app';
+import { clamp, toHex8 } from '../core/color';
 import {
   canvasToPngBlob,
   deserializeBmeowProject,
@@ -18,6 +19,7 @@ import { getMcpDefaultSaveDir, isMcpBridgeActive } from '../mcpBridge';
 import { openShortcutsDialog, shortcutManager } from '../shortcuts/blenderShortcuts';
 import { APP_VERSION, openChangelogDialog } from './changelogDialog';
 import { confirm2, h, openSheet, rangeRow, select, toast, toggle } from './dom';
+import { buildRgbaColorPickerRow } from './materialPanel';
 
 export function openNewProjectDialog(app: App, afterFit: () => void) {
   let canvasW = 256;
@@ -744,9 +746,87 @@ export function openSettingsDialog(app: App) {
       };
       return [presetRow, shadeSlider.row, shadeHint, interBlockRow];
     })(),
-    h('div', { class: 'menu-sec' }, '画布与建模交互'),
+    h('div', { class: 'menu-sec' }, '网格线设置'),
     toggle('显示 32×16 等距菱形网格', app.settings.showIsoGrid, (v) => {
       app.settings.showIsoGrid = v;
+      app.saveSettings();
+    }),
+    toggle('高倍缩放显示 1px 像素网格', app.settings.showPixelGrid, (v) => {
+      app.settings.showPixelGrid = v;
+      app.saveSettings();
+    }),
+    (() => {
+      const gridColorHost = h('div', { style: 'display:flex;flex-direction:column;gap:6px' });
+      const defaultHex8 = toHex8(DEFAULT_ISO_GRID_COLOR);
+      const renderGridColorControls = () => {
+        gridColorHost.innerHTML = '';
+        const gc = app.settings.isoGridColor;
+        const pct = Math.round((gc.a / 255) * 1000) / 10;
+        const pickerRow = buildRgbaColorPickerRow('网格线颜色', gc, app, {
+          onRestoreSilent: (orig) => {
+            app.settings.isoGridColor = { ...orig };
+          },
+          onPreview: (next) => {
+            app.settings.isoGridColor = { ...next };
+            app.emit('view');
+          },
+          onCancel: (orig) => {
+            app.settings.isoGridColor = { ...orig };
+            app.emit('view');
+          },
+          onCommit: (next) => {
+            app.settings.isoGridColor = { ...next };
+            app.saveSettings();
+            renderGridColorControls();
+          },
+        });
+        const opacityRow = rangeRow(
+          '网格线不透明度 (%)',
+          0,
+          100,
+          pct,
+          (v) => {
+            const nextA = clamp(Math.round((v / 100) * 255), 0, 255);
+            app.settings.isoGridColor = { ...app.settings.isoGridColor, a: nextA };
+            app.emit('view');
+          },
+          0.5,
+          {
+            onCommit: (v) => {
+              const nextA = clamp(Math.round((v / 100) * 255), 0, 255);
+              app.settings.isoGridColor = { ...app.settings.isoGridColor, a: nextA };
+              app.saveSettings();
+              renderGridColorControls();
+            },
+          },
+        ).row;
+        const resetRow = h(
+          'div',
+          { class: 'btn-row' },
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn small',
+              title: `恢复默认网格线颜色 (${defaultHex8})`,
+              onclick: () => {
+                app.settings.isoGridColor = { ...DEFAULT_ISO_GRID_COLOR };
+                app.saveSettings();
+                renderGridColorControls();
+                toast(`已恢复默认网格线颜色 (${defaultHex8})`);
+              },
+            },
+            `↺ 恢复默认网格色 (${defaultHex8})`,
+          ),
+        );
+        gridColorHost.append(pickerRow, opacityRow, resetRow);
+      };
+      renderGridColorControls();
+      return gridColorHost;
+    })(),
+    h('div', { class: 'menu-sec' }, '画布与建模交互'),
+    toggle('📍 显示离地选中图形的地面投影位置', app.settings.showGroundProjection, (v) => {
+      app.settings.showGroundProjection = v;
       app.saveSettings();
     }),
     toggle('旋转 90° 时自动按遮挡深度排层', app.doc.autoSortOnRotate, (v) => {
