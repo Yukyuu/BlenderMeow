@@ -1326,12 +1326,13 @@ export function getLocalDimsFromShape(
 }
 
 export function getPlanarFacesForShape(
-  s: Pick<ParametricShape, 'shapeType' | 'sizeU' | 'sizeV' | 'heightPx' | 'ori' | 'flipZ' | 'prismSides' | 'triPrismCut' | 'wedgeMode'>,
+  s: Pick<ParametricShape, 'shapeType' | 'sizeU' | 'sizeV' | 'heightPx' | 'ori' | 'flipZ' | 'tiltUDeg' | 'tiltVDeg' | 'prismSides' | 'triPrismCut' | 'wedgeMode'>,
 ): PlanarFaceSpec[] {
   const { lsu, lsv } = getLocalDimsFromShape(s);
   const wU = Math.max(4, Math.round(lsu * 16));
   const wV = Math.max(4, Math.round(lsv * 16));
   const wallH = Math.max(4, Math.round(s.heightPx));
+  const isTilted = Math.abs(s.tiltUDeg ?? 0) > 1e-4 || Math.abs(s.tiltVDeg ?? 0) > 1e-4;
 
   switch (s.shapeType) {
     case 'box':
@@ -1341,6 +1342,9 @@ export function getPlanarFacesForShape(
         { id: 'top', label: '顶面 (+Z)', shortLabel: '顶面 (+Z)', faceW: wU, faceH: wV, isTop: true, defaultIsoMode: 'iso_diamond' },
         { id: 'wall_nv', label: '后右墙 (-V)', shortLabel: '后右 (-V)', faceW: wU, faceH: wallH, isTop: false, defaultIsoMode: 'wall_down_right' },
         { id: 'wall_nu', label: '后左墙 (-U)', shortLabel: '后左 (-U)', faceW: wV, faceH: wallH, isTop: false, defaultIsoMode: 'wall_up_right' },
+        ...(isTilted
+          ? [{ id: 'bottom', label: '底面 (-Z)', shortLabel: '底面 (-Z)', faceW: wU, faceH: wV, isTop: false, defaultIsoMode: 'iso_diamond' as const }]
+          : []),
       ];
 
     case 'prism': {
@@ -1385,6 +1389,18 @@ export function getPlanarFacesForShape(
           defaultIsoMode: isUpRight ? 'wall_up_right' : 'wall_down_right',
         });
       }
+      if (isTilted) {
+        faces.push({
+          id: 'bottom',
+          label: '底面 (-Z)',
+          shortLabel: '底面 (-Z)',
+          faceW: wU,
+          faceH: wV,
+          isTop: false,
+          defaultIsoMode: 'iso_diamond',
+          clipPolyUV: topPolyUV,
+        });
+      }
       return faces;
     }
 
@@ -1407,13 +1423,27 @@ export function getPlanarFacesForShape(
           defaultIsoMode: 'iso_diamond',
           clipPolyUV: [[0, 0], [0, 1], [1, 0]],
         },
+        ...(isTilted
+          ? [{
+              id: 'bottom',
+              label: '三角底面 (-Z)',
+              shortLabel: '底面 (-Z)',
+              faceW: wU,
+              faceH: wV,
+              isTop: false,
+              defaultIsoMode: 'iso_diamond' as const,
+              clipPolyUV: [[0, 0], [0, 1], [1, 0]] as [number, number][],
+            }]
+          : []),
       ];
     }
 
     case 'wedge': {
       const flippedTopFace: PlanarFaceSpec[] = s.flipZ
         ? [{ id: 'top', label: '顶面 (+Z)', shortLabel: '顶面 (+Z)', faceW: wU, faceH: wV, isTop: true, defaultIsoMode: 'iso_diamond' }]
-        : [];
+        : isTilted
+          ? [{ id: 'bottom', label: '底面 (-Z)', shortLabel: '底面 (-Z)', faceW: wU, faceH: wV, isTop: false, defaultIsoMode: 'iso_diamond' }]
+          : [];
       if (s.wedgeMode === 'gable') {
         const slopeLenPx = Math.max(4, Math.round(Math.hypot(lsv * 8, s.heightPx)));
         return [
@@ -1475,7 +1505,9 @@ export function getPlanarFacesForShape(
       const slantV = Math.max(4, Math.round(Math.hypot(lsv * 8, s.heightPx)));
       const flippedTopFace: PlanarFaceSpec[] = s.flipZ
         ? [{ id: 'top', label: '顶面 (+Z)', shortLabel: '顶面 (+Z)', faceW: wU, faceH: wV, isTop: true, defaultIsoMode: 'iso_diamond' }]
-        : [];
+        : isTilted
+          ? [{ id: 'bottom', label: '底面 (-Z)', shortLabel: '底面 (-Z)', faceW: wU, faceH: wV, isTop: false, defaultIsoMode: 'iso_diamond' }]
+          : [];
       return [
         ...flippedTopFace,
         { id: 'pyr_pv', label: '前左斜面 (+V)', shortLabel: '前左面', faceW: wU, faceH: slantV, isTop: false, defaultIsoMode: 'wall_down_right', clipPolyUV: [[0, 1], [1, 1], [0.5, 0]] },
@@ -1539,6 +1571,15 @@ export function sanitizeFaceTexturesForShape(shape: ParametricShape): void {
     return;
   }
   const validFaceIds = new Set(getPlanarFacesForShape(shape).map((f) => f.id));
+  // Preserve bottom face texture even when tilt returns to 0° (e.g. scrubbing tilt slider or clicking Reset Tilt)
+  validFaceIds.add('bottom');
+  if (
+    shape.shapeType === 'wedge' ||
+    shape.shapeType === 'pyramid' ||
+    (shape.shapeType === 'right_tri_prism' && (shape.triPrismCut ?? 'vertical') === 'slope')
+  ) {
+    validFaceIds.add('top');
+  }
   const clean: Record<string, FaceTextureSlot> = {};
   let count = 0;
   for (const [k, raw] of Object.entries(shape.faceTextures)) {

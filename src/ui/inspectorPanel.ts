@@ -9,10 +9,15 @@ import {
 } from '../core/isoMath';
 import {
   cloneShape,
+  computeZPxForTargetMinZ,
   createDefaultShape,
+  getShapeTiltedZRange,
+  hasActiveTilt,
+  normalizeTiltDeg,
   SHAPE_LABELS,
   type ParametricShape,
   type ShapeKind,
+  type TiltPivot,
   type TriPrismCut,
 } from '../core/isoRenderer';
 import { createArchPresetNodes } from '../core/arch';
@@ -51,31 +56,32 @@ function makeDualUnitInput(
   minNative: number,
   onCommit: (v: number) => void,
 ) {
+  let curMinNative = minNative;
   const nIn = h('input', {
     type: 'number',
     class: 'num dual',
     step: String(stepNative),
-    min: String(minNative),
+    min: String(curMinNative),
     value: String(Math.round(initialNative * 1000) / 1000),
   }) as HTMLInputElement;
   const mIn = h('input', {
     type: 'number',
     class: 'num dual',
     step: '0.1',
-    min: String(Math.round(toMeters(minNative) * 100) / 100),
+    min: String(Math.round(toMeters(curMinNative) * 100) / 100),
     value: String(Math.round(toMeters(initialNative) * 100) / 100),
   }) as HTMLInputElement;
 
   nIn.onchange = () => {
-    const v = Math.max(minNative, +nIn.value || 0);
+    const v = Math.max(curMinNative, +nIn.value || 0);
     const rv = Math.round(v * 1000) / 1000;
     nIn.value = String(rv);
     mIn.value = String(Math.round(toMeters(rv) * 100) / 100);
     onCommit(rv);
   };
   mIn.onchange = () => {
-    const m = Math.max(toMeters(minNative), +mIn.value || 0);
-    const nv = Math.max(minNative, fromMeters(m));
+    const m = Math.max(toMeters(curMinNative), +mIn.value || 0);
+    const nv = Math.max(curMinNative, fromMeters(m));
     const rv = stepNative >= 1 ? Math.round(nv) : Math.round(nv * 16) / 16;
     nIn.value = String(rv);
     mIn.value = String(Math.round(toMeters(rv) * 100) / 100);
@@ -95,6 +101,11 @@ function makeDualUnitInput(
     setNative(v: number) {
       nIn.value = String(Math.round(v * 1000) / 1000);
       mIn.value = String(Math.round(toMeters(v) * 100) / 100);
+    },
+    setMin(nextMin: number) {
+      curMinNative = nextMin;
+      nIn.min = String(curMinNative);
+      mIn.min = String(Math.round(toMeters(curMinNative) * 100) / 100);
     },
   };
 }
@@ -128,6 +139,9 @@ export function buildShapeForm(
             shape.sizeU = Math.max(1, Math.round(shape.sizeU));
             shape.sizeV = Math.max(1, Math.round(shape.sizeV));
             delete shape.flipZ;
+            delete shape.tiltUDeg;
+            delete shape.tiltVDeg;
+            delete shape.tiltPivot;
             delete shape.colSections;
             delete shape.colInterp;
             delete shape.activeColSectionId;
@@ -186,11 +200,20 @@ export function buildShapeForm(
     shape.sizeV = isBase ? Math.max(1, Math.round(v)) : v;
     opts.afterMutate({ needsResort: true });
   });
-  const zRow = makeDualUnitInput('离地 Z', shape.zPx, zPxToMeters, metersToZPx, 'px', 1, 0, (v) => {
-    opts.beforeMutate('修改离地高度 Z');
-    shape.zPx = Math.round(v);
-    opts.afterMutate({ needsResort: true });
-  });
+  const zRow = makeDualUnitInput(
+    '离地 Z',
+    shape.zPx,
+    zPxToMeters,
+    metersToZPx,
+    'px',
+    1,
+    !isBase && hasActiveTilt(shape) ? -512 : 0,
+    (v) => {
+      opts.beforeMutate('修改离地高度 Z');
+      shape.zPx = Math.round(v);
+      opts.afterMutate({ needsResort: true });
+    },
+  );
 
   wrap.append(uRow.el, vRow.el, suRow.el, svRow.el, zRow.el);
 
@@ -234,11 +257,12 @@ export function buildShapeForm(
             onclick: () => {
               const wf = app.doc.getShapeWorldFootprint(shape);
               const topZ = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, opts.targetLayerId);
+              const nextZ = computeZPxForTargetMinZ(shape, topZ);
               opts.beforeMutate('叠放到下方顶面');
-              shape.zPx = topZ;
-              zRow.setNative(topZ);
+              shape.zPx = nextZ;
+              zRow.setNative(nextZ);
               opts.afterMutate({ needsResort: true });
-              toast(`🧱 已叠放至 Z = ${topZ}px (${zPxToMeters(topZ).toFixed(2)}m)`);
+              toast(`🧱 已叠放至 Z = ${Math.round(topZ)}px (${zPxToMeters(topZ).toFixed(2)}m)`);
             },
           },
           '🧱 叠放到顶面',
@@ -302,6 +326,156 @@ export function buildShapeForm(
         sanitizeFaceTexturesForShape(shape);
         opts.afterMutate({ needsResort: true });
       }),
+    );
+
+    // Vertical-plane 3D tilt rotation (Z-axis plane tilt & lay flat)
+    wrap.append(h('div', { class: 'menu-sec' }, '竖直平面倾斜旋转（Z 轴倾角）'));
+    let tiltDragWasOnGround = false;
+    const isShapeOnGround = () => Math.abs(getShapeTiltedZRange(shape).minZ) <= 1.05;
+    const syncGroundAfterTilt = (wasOnGround: boolean) => {
+      const activeTilt = hasActiveTilt(shape);
+      zRow.setMin(activeTilt ? -512 : 0);
+      if (!activeTilt) {
+        if (shape.zPx < 0 || (app.settings.keepGroundedOnTilt && wasOnGround)) {
+          shape.zPx = 0;
+          zRow.setNative(0);
+        }
+        return;
+      }
+      if (!app.settings.keepGroundedOnTilt) return;
+      const { minZ } = getShapeTiltedZRange(shape);
+      if (wasOnGround || minZ < -1e-4) {
+        const nextZ = computeZPxForTargetMinZ(shape, 0);
+        if (nextZ !== shape.zPx) {
+          shape.zPx = nextZ;
+          zRow.setNative(nextZ);
+        }
+      }
+    };
+    const tiltURow = rangeRow(
+      'U-Z 倾角 (°)',
+      -180,
+      180,
+      shape.tiltUDeg ?? 0,
+      (v) => {
+        const nv = normalizeTiltDeg(v);
+        if (nv !== 0) shape.tiltUDeg = nv;
+        else delete shape.tiltUDeg;
+        syncGroundAfterTilt(tiltDragWasOnGround);
+        opts.afterMutate({ live: true });
+      },
+      1,
+      {
+        onBegin: () => {
+          tiltDragWasOnGround = isShapeOnGround();
+          opts.beforeMutate('调整 U-Z 倾斜角度');
+        },
+        onCommit: () => {
+          syncGroundAfterTilt(tiltDragWasOnGround);
+          sanitizeFaceTexturesForShape(shape);
+          opts.afterMutate({ needsResort: true, live: false });
+        },
+      },
+    );
+    const tiltVRow = rangeRow(
+      'V-Z 倾角 (°)',
+      -180,
+      180,
+      shape.tiltVDeg ?? 0,
+      (v) => {
+        const nv = normalizeTiltDeg(v);
+        if (nv !== 0) shape.tiltVDeg = nv;
+        else delete shape.tiltVDeg;
+        syncGroundAfterTilt(tiltDragWasOnGround);
+        opts.afterMutate({ live: true });
+      },
+      1,
+      {
+        onBegin: () => {
+          tiltDragWasOnGround = isShapeOnGround();
+          opts.beforeMutate('调整 V-Z 倾斜角度');
+        },
+        onCommit: () => {
+          syncGroundAfterTilt(tiltDragWasOnGround);
+          sanitizeFaceTexturesForShape(shape);
+          opts.afterMutate({ needsResort: true, live: false });
+        },
+      },
+    );
+    const applyTiltPreset = (tu: number, tv: number, label: string) => {
+      const wasOnGround = isShapeOnGround();
+      opts.beforeMutate(label);
+      const ntu = normalizeTiltDeg(tu);
+      const ntv = normalizeTiltDeg(tv);
+      if (ntu !== 0) shape.tiltUDeg = ntu;
+      else delete shape.tiltUDeg;
+      if (ntv !== 0) shape.tiltVDeg = ntv;
+      else delete shape.tiltVDeg;
+      tiltURow.set(ntu);
+      tiltVRow.set(ntv);
+      syncGroundAfterTilt(wasOnGround);
+      sanitizeFaceTexturesForShape(shape);
+      opts.afterMutate({ needsResort: true });
+    };
+    wrap.append(
+      tiltURow.row,
+      tiltVRow.row,
+      h(
+        'div',
+        { class: 'preset-row' },
+        h('button', { type: 'button', class: 'btn small', onclick: () => applyTiltPreset(0, 0, '复位倾斜角度') }, '0° 复位'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => applyTiltPreset(45, 0, 'U-Z 倾斜 45°') }, 'U +45°'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => applyTiltPreset(90, 0, '沿 U-Z 放平 90°') }, 'U +90° 放平'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => applyTiltPreset(0, 90, '沿 V-Z 放平 90°') }, 'V +90° 放平'),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn small accent',
+            title: '自动调整离地高度 Z，使倾斜后形体的最低点刚好贴齐地面 (Z = 0)',
+            onclick: () => {
+              const nextZ = computeZPxForTargetMinZ(shape, 0);
+              opts.beforeMutate('倾斜底部贴齐地面');
+              shape.zPx = nextZ;
+              zRow.setNative(nextZ);
+              opts.afterMutate({ needsResort: true });
+              toast(`⬇ 已将倾斜底部贴齐地面 (Z = ${nextZ}px)`);
+            },
+          },
+          '⬇ 底部贴地',
+        ),
+      ),
+      h(
+        'div',
+        { class: 'range-row' },
+        h('span', { class: 'rl' }, '旋转支点'),
+        select<TiltPivot>(
+          [
+            { id: 'center', label: '几何中心 (默认)' },
+            { id: 'bottom', label: '底面贴合 (基座不沉底)' },
+          ],
+          shape.tiltPivot ?? 'center',
+          (v) => {
+            const wasOnGround = isShapeOnGround();
+            opts.beforeMutate('修改倾斜旋转支点');
+            if (v === 'bottom') shape.tiltPivot = 'bottom';
+            else delete shape.tiltPivot;
+            syncGroundAfterTilt(wasOnGround);
+            opts.afterMutate({ needsResort: true });
+          },
+        ),
+      ),
+      toggle('🧲 倾斜时自动贴地（防止穿入地下）', app.settings.keepGroundedOnTilt, (v) => {
+        app.settings.keepGroundedOnTilt = v;
+        app.saveSettings();
+        if (v && hasActiveTilt(shape) && getShapeTiltedZRange(shape).minZ < -1e-4) {
+          opts.beforeMutate('倾斜底部贴齐地面');
+          shape.zPx = computeZPxForTargetMinZ(shape, 0);
+          zRow.setNative(shape.zPx);
+          opts.afterMutate({ needsResort: true });
+        }
+      }),
+      h('div', { class: 'hint' }, '可在 -180°~180° 内沿竖直平面任意倾斜或放平（±90° 即水平躺卧），旋转严格保持 TheoTown 物理比例。'),
     );
   }
 

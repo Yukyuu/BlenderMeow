@@ -63,6 +63,8 @@ export type ShapeKind =
 
 export type TriPrismCut = 'vertical' | 'slope';
 
+export type TiltPivot = 'center' | 'bottom';
+
 export type OutlineMode = 'none' | 'outer' | 'all_edges';
 
 export type FacadePatternType =
@@ -93,6 +95,12 @@ export interface ParametricShape {
   heightPx: number;
   ori: ViewRotation;
   flipZ?: boolean;
+  /** Vertical-plane tilt in local U-Z plane (-180..+180 deg; +90 lays +Z flat along +U) */
+  tiltUDeg?: number;
+  /** Vertical-plane tilt in local V-Z plane (-180..+180 deg; +90 lays +Z flat along +V) */
+  tiltVDeg?: number;
+  /** Tilt rotation pivot: geometric center (default) or base center */
+  tiltPivot?: TiltPivot;
   prismSides: number;
   triPrismCut: TriPrismCut;
   wedgeMode: 'ramp' | 'gable';
@@ -195,6 +203,20 @@ export function createDefaultShape(
   } else {
     delete out.flipZ;
   }
+  if (shapeType !== 'theotown_base') {
+    const tu = normalizeTiltDeg(overrides.tiltUDeg);
+    const tv = normalizeTiltDeg(overrides.tiltVDeg);
+    if (tu !== 0) out.tiltUDeg = tu;
+    else delete out.tiltUDeg;
+    if (tv !== 0) out.tiltVDeg = tv;
+    else delete out.tiltVDeg;
+    if (overrides.tiltPivot === 'bottom') out.tiltPivot = 'bottom';
+    else delete out.tiltPivot;
+  } else {
+    delete out.tiltUDeg;
+    delete out.tiltVDeg;
+    delete out.tiltPivot;
+  }
   if (hasLoftData && loftSections) {
     out.loftSections = loftSections;
     out.loftInterp = overrides.loftInterp ?? 'smooth';
@@ -270,6 +292,20 @@ export function cloneShape(s: ParametricShape): ParametricShape {
     copy.flipZ = true;
   } else {
     delete copy.flipZ;
+  }
+  if (s.shapeType !== 'theotown_base') {
+    const tu = normalizeTiltDeg(s.tiltUDeg);
+    const tv = normalizeTiltDeg(s.tiltVDeg);
+    if (tu !== 0) copy.tiltUDeg = tu;
+    else delete copy.tiltUDeg;
+    if (tv !== 0) copy.tiltVDeg = tv;
+    else delete copy.tiltVDeg;
+    if (s.tiltPivot === 'bottom') copy.tiltPivot = 'bottom';
+    else delete copy.tiltPivot;
+  } else {
+    delete copy.tiltUDeg;
+    delete copy.tiltVDeg;
+    delete copy.tiltPivot;
   }
   if (s.shapeType === 'loft') {
     copy.loftSections = cloneLoftSections(s.loftSections ?? createDefaultLoftSections());
@@ -765,6 +801,317 @@ function compositeFaceTexelOverBase(base: RGBA, tex: RGBA, shadeFactor: number):
   };
 }
 
+export const METRIC_PX_PER_CELL = 18; // 1 cell = 9.6m, 1 zPx = 1.6/3 m => 1 cell = 18 zPx
+
+export function normalizeTiltDeg(deg?: number | null): number {
+  if (typeof deg !== 'number' || !Number.isFinite(deg)) return 0;
+  let d = ((deg % 360) + 360) % 360;
+  if (d > 180) d -= 360;
+  d = Math.round(d * 100) / 100;
+  if (Math.abs(d) < 1e-6) return 0;
+  if (d <= -180 + 1e-6) return 180;
+  return d;
+}
+
+export function hasActiveTilt(
+  shape?: Pick<ParametricShape, 'shapeType' | 'tiltUDeg' | 'tiltVDeg'> | null,
+): boolean {
+  if (!shape || shape.shapeType === 'theotown_base') return false;
+  return Math.abs(normalizeTiltDeg(shape.tiltUDeg)) > 1e-4 || Math.abs(normalizeTiltDeg(shape.tiltVDeg)) > 1e-4;
+}
+
+export interface TiltTransform {
+  cuView: number;
+  cvView: number;
+  /** Local vertical rotation pivot elevation before any bottom-flush compensation */
+  czView: number;
+  /** Output vertical elevation origin (equals czView for 'center' pivot; shifted upward for 'bottom' pivot so minZ === z0) */
+  czOut: number;
+  lsu: number;
+  lsv: number;
+  ori: ViewRotation;
+  z0: number;
+  z1: number;
+  /** Orthogonal 3x3 matrix M = R_ori * R_v(tv) * R_u(tu) mapping local metric (lx, ly, lz) -> view metric (vx, vy, vz) */
+  m00: number; m01: number; m02: number;
+  m10: number; m11: number; m12: number;
+  m20: number; m21: number; m22: number;
+}
+
+function computeBottomPivotMinVz(
+  lsu: number,
+  lsv: number,
+  H: number,
+  m20: number,
+  m21: number,
+  m22: number,
+  shape?: ParametricShape,
+): number {
+  const rx = Math.max(0.5, lsu * METRIC_PX_PER_CELL * 0.5);
+  const ry = Math.max(0.5, lsv * METRIC_PX_PER_CELL * 0.5);
+  const evalPt = (lu: number, lv: number, lz: number) =>
+    m20 * ((lu - 0.5) * lsu * METRIC_PX_PER_CELL) +
+    m21 * ((lv - 0.5) * lsv * METRIC_PX_PER_CELL) +
+    m22 * lz;
+
+  if (!shape || (shape.shapeType === 'box' && !hasActiveColumnSections(shape))) {
+    return -Math.abs(m20) * rx - Math.abs(m21) * ry + Math.min(0, m22 * H);
+  }
+  const flipZ = Boolean(shape.flipZ);
+  if (shape.shapeType === 'sphere' || (shape.shapeType === 'dome' && shape.domeMode === 'sphere')) {
+    const rz = Math.max(0.5, H * 0.5);
+    return m22 * (H * 0.5) - Math.hypot(m20 * rx, m21 * ry, m22 * rz);
+  }
+  if (shape.shapeType === 'cylinder' && !hasActiveColumnSections(shape)) {
+    return Math.min(0, m22 * H) - Math.hypot(m20 * rx, m21 * ry);
+  }
+  if (shape.shapeType === 'cone') {
+    const lzBase = flipZ ? H : 0;
+    const lzApex = flipZ ? 0 : H;
+    return Math.min(m22 * lzBase - Math.hypot(m20 * rx, m21 * ry), m22 * lzApex);
+  }
+  if (shape.shapeType === 'dome') {
+    const zPlane = flipZ ? H : 0;
+    const signZ = flipZ ? -1 : 1;
+    const a = m20 * rx;
+    const b = m21 * ry;
+    const c = m22 * signZ * Math.max(0.5, H);
+    return m22 * zPlane - (c < 0 ? Math.hypot(a, b, c) : Math.hypot(a, b));
+  }
+
+  let minVz = Infinity;
+  const check = (lu: number, lv: number, lz: number) => {
+    const v = evalPt(lu, lv, lz);
+    if (v < minVz) minVz = v;
+  };
+
+  if (shape.shapeType === 'loft') {
+    const rawLoft = buildAlignedLoftRings(
+      normalizeLoftSections(shape.loftSections),
+      24,
+      16,
+      shape.loftInterp ?? 'smooth',
+      false,
+      lsu,
+      lsv,
+      0,
+    );
+    for (const ring of rawLoft.rings) {
+      const lz = (flipZ ? 1 - ring.t : ring.t) * H;
+      for (const [lu, lv] of ring.pts) check(lu, lv, lz);
+    }
+    return Number.isFinite(minVz) ? minVz : 0;
+  }
+  if (hasActiveColumnSections(shape)) {
+    const rawRings = buildColumnRings(shape, 16, 24);
+    for (const ring of rawRings) {
+      const lz = (flipZ ? 1 - ring.t : ring.t) * H;
+      for (const [lu, lv] of ring.pts) check(lu, lv, lz);
+    }
+    return Number.isFinite(minVz) ? minVz : 0;
+  }
+  if (shape.shapeType === 'right_tri_prism') {
+    if ((shape.triPrismCut ?? 'vertical') === 'slope') {
+      const lzBase = flipZ ? H : 0;
+      const lzTop = flipZ ? 0 : H;
+      check(0, 0, lzBase); check(0, 1, lzBase); check(1, 1, lzBase); check(1, 0, lzBase);
+      check(1, 0, lzTop); check(1, 1, lzTop);
+    } else {
+      for (const lz of [0, H]) {
+        check(0, 0, lz); check(0, 1, lz); check(1, 0, lz);
+      }
+    }
+    return minVz;
+  }
+  if (shape.shapeType === 'prism') {
+    const n = Math.max(3, Math.min(12, Math.round(shape.prismSides)));
+    const startAngle = Math.PI / n;
+    for (let i = 0; i < n; i++) {
+      const ang = startAngle - (i * Math.PI * 2) / n;
+      const lu = 0.5 + Math.cos(ang) * 0.5;
+      const lv = 0.5 + Math.sin(ang) * 0.5;
+      check(lu, lv, 0);
+      check(lu, lv, H);
+    }
+    return minVz;
+  }
+  if (shape.shapeType === 'wedge') {
+    const lzBase = flipZ ? H : 0;
+    const lzTop = flipZ ? 0 : H;
+    check(0, 0, lzBase); check(0, 1, lzBase); check(1, 1, lzBase); check(1, 0, lzBase);
+    if (shape.wedgeMode === 'gable') {
+      check(0, 0.5, lzTop); check(1, 0.5, lzTop);
+    } else {
+      check(1, 0, lzTop); check(1, 1, lzTop);
+    }
+    return minVz;
+  }
+  if (shape.shapeType === 'pyramid') {
+    const lzBase = flipZ ? H : 0;
+    const lzTop = flipZ ? 0 : H;
+    check(0, 0, lzBase); check(0, 1, lzBase); check(1, 1, lzBase); check(1, 0, lzBase);
+    check(0.5, 0.5, lzTop);
+    return minVz;
+  }
+  if (shape.shapeType === 'arch') {
+    const cs = buildArchCrossSection({
+      outerNodes: shape.archNodes,
+      hollow: shape.archHollow ?? false,
+      hollowStyle: shape.archHollowStyle ?? 'shell',
+      innerMode: shape.archInnerMode ?? 'parallel',
+      thickness: shape.archThickness ?? 0.28,
+      innerNodes: shape.archInnerNodes,
+      spanMetric: Math.max(4, lsu * 18),
+      heightMetric: Math.max(4, H),
+      sampleCount: 18,
+    });
+    for (const [s, hFrac] of cs.poly) {
+      const lz = (flipZ ? 1 - hFrac : hFrac) * H;
+      check(s, 0, lz);
+      check(s, 1, lz);
+    }
+    return Number.isFinite(minVz) ? minVz : 0;
+  }
+  return -Math.abs(m20) * rx - Math.abs(m21) * ry + Math.min(0, m22 * H);
+}
+
+export function buildTiltTransform(
+  u0: number,
+  v0: number,
+  su: number,
+  sv: number,
+  z0: number,
+  z1: number,
+  ori: ViewRotation,
+  tiltUDeg?: number,
+  tiltVDeg?: number,
+  tiltPivot?: TiltPivot,
+  shape?: ParametricShape,
+): TiltTransform {
+  const tu = (normalizeTiltDeg(tiltUDeg) * Math.PI) / 180;
+  const tv = (normalizeTiltDeg(tiltVDeg) * Math.PI) / 180;
+  const cu = Math.cos(tu);
+  const suSin = Math.sin(tu);
+  const cv = Math.cos(tv);
+  const svSin = Math.sin(tv);
+
+  // R_tilt = R_v(tv) * R_u(tu)
+  const r00 = cu,          r01 = 0,     r02 = suSin;
+  const r10 = -suSin * svSin, r11 = cv, r12 = cu * svSin;
+  const r20 = -suSin * cv, r21 = -svSin, r22 = cu * cv;
+
+  let m00: number, m01: number, m02: number;
+  let m10: number, m11: number, m12: number;
+  switch (ori) {
+    case 0:
+      m00 = r00; m01 = r01; m02 = r02;
+      m10 = r10; m11 = r11; m12 = r12;
+      break;
+    case 1:
+      m00 = -r10; m01 = -r11; m02 = -r12;
+      m10 = r00;  m11 = r01;  m12 = r02;
+      break;
+    case 2:
+      m00 = -r00; m01 = -r01; m02 = -r02;
+      m10 = -r10; m11 = -r11; m12 = -r12;
+      break;
+    case 3:
+      m00 = r10;  m01 = r11;  m02 = r12;
+      m10 = -r00; m11 = -r01; m12 = -r02;
+      break;
+  }
+  const m20 = r20, m21 = r21, m22 = r22;
+
+  const odd = ori % 2 === 1;
+  const lsu = odd ? sv : su;
+  const lsv = odd ? su : sv;
+  const cuView = u0 + su * 0.5;
+  const cvView = v0 + sv * 0.5;
+  const czView = tiltPivot === 'bottom' ? z0 : z0 + (z1 - z0) * 0.5;
+  const czOut =
+    tiltPivot === 'bottom'
+      ? czView - computeBottomPivotMinVz(lsu, lsv, Math.max(0, z1 - z0), m20, m21, m22, shape)
+      : czView;
+
+  return {
+    cuView,
+    cvView,
+    czView,
+    czOut,
+    lsu,
+    lsv,
+    ori,
+    z0,
+    z1,
+    m00, m01, m02,
+    m10, m11, m12,
+    m20, m21, m22,
+  };
+}
+
+export function transformLocalPointWithTilt(
+  lu: number,
+  lv: number,
+  z: number,
+  tilt: TiltTransform,
+): Vec3 {
+  const lx = (lu - 0.5) * tilt.lsu * METRIC_PX_PER_CELL;
+  const ly = (lv - 0.5) * tilt.lsv * METRIC_PX_PER_CELL;
+  const lz = z - tilt.czView;
+  const vx = tilt.m00 * lx + tilt.m01 * ly + tilt.m02 * lz;
+  const vy = tilt.m10 * lx + tilt.m11 * ly + tilt.m12 * lz;
+  const vz = tilt.m20 * lx + tilt.m21 * ly + tilt.m22 * lz;
+  return {
+    x: tilt.cuView + vx / METRIC_PX_PER_CELL,
+    y: tilt.cvView + vy / METRIC_PX_PER_CELL,
+    z: tilt.czOut + vz,
+  };
+}
+
+export function tiltVec3WithTransform(pt: Vec3, tilt: TiltTransform): Vec3 {
+  const dx = (pt.x - tilt.cuView) * METRIC_PX_PER_CELL;
+  const dy = (pt.y - tilt.cvView) * METRIC_PX_PER_CELL;
+  const dz = pt.z - tilt.czView;
+  let lx: number, ly: number;
+  switch (tilt.ori) {
+    case 0: lx = dx; ly = dy; break;
+    case 1: lx = dy; ly = -dx; break;
+    case 2: lx = -dx; ly = -dy; break;
+    case 3: lx = -dy; ly = dx; break;
+  }
+  const vx = tilt.m00 * lx + tilt.m01 * ly + tilt.m02 * dz;
+  const vy = tilt.m10 * lx + tilt.m11 * ly + tilt.m12 * dz;
+  const vz = tilt.m20 * lx + tilt.m21 * ly + tilt.m22 * dz;
+  return {
+    x: tilt.cuView + vx / METRIC_PX_PER_CELL,
+    y: tilt.cvView + vy / METRIC_PX_PER_CELL,
+    z: tilt.czOut + vz,
+  };
+}
+
+export function tiltNormalToView(
+  nxLoc: number,
+  nyLoc: number,
+  nzLoc: number,
+  tilt: TiltTransform,
+): [number, number, number] {
+  return [
+    tilt.m00 * nxLoc + tilt.m01 * nyLoc + tilt.m02 * nzLoc,
+    tilt.m10 * nxLoc + tilt.m11 * nyLoc + tilt.m12 * nzLoc,
+    tilt.m20 * nxLoc + tilt.m21 * nyLoc + tilt.m22 * nzLoc,
+  ];
+}
+
+export function tiltMeshFaces(faces: MeshFace[], tilt: TiltTransform): MeshFace[] {
+  return faces.map((f) => ({
+    ...f,
+    verts: f.verts.map((pt) => tiltVec3WithTransform(pt, tilt)),
+    uvOrigin: f.uvOrigin ? tiltVec3WithTransform(f.uvOrigin, tilt) : undefined,
+    uvEndU: f.uvEndU ? tiltVec3WithTransform(f.uvEndU, tilt) : undefined,
+    uvEndV: f.uvEndV ? tiltVec3WithTransform(f.uvEndV, tilt) : undefined,
+  }));
+}
+
 export function transformLocalToViewPoint(
   lu: number,
   lv: number,
@@ -890,6 +1237,7 @@ function renderConvexMesh(
     else flatCol = shadeByNormal(shape.baseColor, nx, ny, nz, shape.autoShade, shape.shadeContrast, shape.roofColor);
 
     const isVerticalSide = Math.abs(nz) < 1e-4;
+    const isTiltedShape = hasActiveTilt(shape);
     let minSx = Infinity, maxSx = -Infinity;
     for (const [sx] of screen) {
       if (sx < minSx) minSx = sx;
@@ -905,10 +1253,8 @@ function renderConvexMesh(
     }
     const wallH = Math.max(1, Math.round(wallMaxZ - wallMinZ));
 
-    // Optional per-face custom texture UV affine basis on screen
-    const slot = face.faceId && shape.faceTextures ? shape.faceTextures[face.faceId] : undefined;
-    const faceSpec = face.faceId && faceSpecMap ? faceSpecMap.get(face.faceId) : undefined;
-    let uvBasis: {
+    // Precompute face screen UV basis (shared by custom faceTextures and tilted procedural patterns)
+    let rawUvBasis: {
       ox: number;
       oy: number;
       dux: number;
@@ -916,12 +1262,10 @@ function renderConvexMesh(
       dvx: number;
       dvy: number;
       invDet: number;
-      faceW: number;
-      faceH: number;
-      shadeFactor: number;
-      slot: FaceTextureSlot;
+      metricW: number;
+      metricH: number;
     } | null = null;
-    if (slot && slot.mode !== 'none' && face.uvOrigin && face.uvEndU && face.uvEndV) {
+    if (face.uvOrigin && face.uvEndU && face.uvEndV) {
       const [ox, oy] = isoToScreenPx(face.uvOrigin.x, face.uvOrigin.y, face.uvOrigin.z, originX, originY);
       const [u1x, u1y] = isoToScreenPx(face.uvEndU.x, face.uvEndU.y, face.uvEndU.z, originX, originY);
       const [v1x, v1y] = isoToScreenPx(face.uvEndV.x, face.uvEndV.y, face.uvEndV.z, originX, originY);
@@ -931,7 +1275,17 @@ function renderConvexMesh(
       const dvy = v1y - oy;
       const det = dux * dvy - duy * dvx;
       if (Math.abs(det) > 1e-4) {
-        uvBasis = {
+        const uLenMetric = Math.hypot(
+          (face.uvEndU.x - face.uvOrigin.x) * METRIC_PX_PER_CELL,
+          (face.uvEndU.y - face.uvOrigin.y) * METRIC_PX_PER_CELL,
+          face.uvEndU.z - face.uvOrigin.z,
+        );
+        const vLenMetric = Math.hypot(
+          (face.uvEndV.x - face.uvOrigin.x) * METRIC_PX_PER_CELL,
+          (face.uvEndV.y - face.uvOrigin.y) * METRIC_PX_PER_CELL,
+          face.uvEndV.z - face.uvOrigin.z,
+        );
+        rawUvBasis = {
           ox,
           oy,
           dux,
@@ -939,15 +1293,30 @@ function renderConvexMesh(
           dvx,
           dvy,
           invDet: 1 / det,
+          metricW: Math.max(4, Math.round((uLenMetric * 16) / METRIC_PX_PER_CELL)),
+          metricH: Math.max(4, Math.round(vLenMetric)),
+        };
+      }
+    }
+
+    // Optional per-face custom texture UV affine basis on screen
+    const slot = face.faceId && shape.faceTextures ? shape.faceTextures[face.faceId] : undefined;
+    const faceSpec = face.faceId && faceSpecMap ? faceSpecMap.get(face.faceId) : undefined;
+    const uvBasis = slot && slot.mode !== 'none' && rawUvBasis
+      ? {
+          ...rawUvBasis,
           faceW: faceSpec?.faceW ?? spanW,
           faceH: faceSpec?.faceH ?? wallH,
           shadeFactor: slot.shadeWithFace !== false
             ? computeFaceTextureShadeFactor(nx, ny, nz, shape.autoShade, shape.shadeContrast)
             : 1,
           slot,
-        };
-      }
-    }
+        }
+      : null;
+
+    const oddOri = viewOri % 2 === 1;
+    const lsuLocal = oddOri ? sv : su;
+    const lsvLocal = oddOri ? su : sv;
 
     const p0v = face.verts[0];
     const p1v = face.verts[1];
@@ -974,34 +1343,50 @@ function renderConvexMesh(
       screen,
       (px, py) => {
         let baseOut = flatCol;
-        if (isTopFlat && (shape.pattern.type === 'roof_grid' || shape.pattern.applyTop)) {
-          const dx = px + 0.5 - originX;
-          const dy = (py + 0.5 + wallMaxZ) - originY;
-          const pu = dx / 32 + dy / 16;
-          const pv = dy / 16 - dx / 32;
-          const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
-          const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
-          const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
-          baseOut = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, flatCol, shape.pattern);
-        } else if (isVerticalSide && shape.pattern.type !== 'none' && shape.pattern.type !== 'roof_grid') {
-          // Compute local wall coordinates (wx, wy)
-          const wx = px - Math.floor(minSx);
-          // Find top-most y on this face at column px
-          let topYAtPx = Infinity;
-          for (let i = 0; i < screen.length; i++) {
-            const [ax, ay] = screen[i];
-            const [bx, by] = screen[(i + 1) % screen.length];
-            const loX = Math.min(ax, bx), hiX = Math.max(ax, bx);
-            if (px + 0.5 >= loX - 0.5 && px + 0.5 <= hiX + 0.5 && Math.abs(bx - ax) > 0.1) {
-              const t = clamp((px + 0.5 - ax) / (bx - ax), 0, 1);
-              const yEdge = ay + (by - ay) * t;
-              if (yEdge < topYAtPx) topYAtPx = yEdge;
+        if (!isTiltedShape) {
+          if (isTopFlat && (shape.pattern.type === 'roof_grid' || shape.pattern.applyTop)) {
+            const dx = px + 0.5 - originX;
+            const dy = (py + 0.5 + wallMaxZ) - originY;
+            const pu = dx / 32 + dy / 16;
+            const pv = dy / 16 - dx / 32;
+            const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
+            const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
+            const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
+            baseOut = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, flatCol, shape.pattern);
+          } else if (isVerticalSide && shape.pattern.type !== 'none' && shape.pattern.type !== 'roof_grid') {
+            // Compute local wall coordinates (wx, wy)
+            const wx = px - Math.floor(minSx);
+            // Find top-most y on this face at column px
+            let topYAtPx = Infinity;
+            for (let i = 0; i < screen.length; i++) {
+              const [ax, ay] = screen[i];
+              const [bx, by] = screen[(i + 1) % screen.length];
+              const loX = Math.min(ax, bx), hiX = Math.max(ax, bx);
+              if (px + 0.5 >= loX - 0.5 && px + 0.5 <= hiX + 0.5 && Math.abs(bx - ax) > 0.1) {
+                const t = clamp((px + 0.5 - ax) / (bx - ax), 0, 1);
+                const yEdge = ay + (by - ay) * t;
+                if (yEdge < topYAtPx) topYAtPx = yEdge;
+              }
             }
+            const rawWy = Math.max(0, Math.floor(py - topYAtPx));
+            const wy = shape.flipZ ? Math.max(0, wallH - 1 - rawWy) : rawWy;
+            const faceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
+            baseOut = sampleWallPattern(wx, wy, spanW, wallH, shape.pattern, flatCol, faceShade);
           }
-          const rawWy = Math.max(0, Math.floor(py - topYAtPx));
-          const wy = shape.flipZ ? Math.max(0, wallH - 1 - rawWy) : rawWy;
-          const faceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
-          baseOut = sampleWallPattern(wx, wy, spanW, wallH, shape.pattern, flatCol, faceShade);
+        } else if (rawUvBasis && shape.pattern.type !== 'none') {
+          const rx = px + 0.5 - rawUvBasis.ox;
+          const ry = py + 0.5 - rawUvBasis.oy;
+          const uPat = clamp((rx * rawUvBasis.dvy - ry * rawUvBasis.dvx) * rawUvBasis.invDet, 0, 0.9999);
+          const vPat = clamp((rawUvBasis.dux * ry - rawUvBasis.duy * rx) * rawUvBasis.invDet, 0, 0.9999);
+          const isCapFace = face.faceId === 'top' || face.faceId === 'bottom';
+          if (isCapFace && (shape.pattern.type === 'roof_grid' || shape.pattern.applyTop)) {
+            baseOut = sampleTopGridColor(uPat, vPat, lsuLocal, lsvLocal, flatCol, shape.pattern);
+          } else if (!isCapFace && shape.pattern.type !== 'roof_grid') {
+            const wx = Math.floor(uPat * rawUvBasis.metricW);
+            const wy = Math.floor(vPat * rawUvBasis.metricH);
+            const faceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
+            baseOut = sampleWallPattern(wx, wy, rawUvBasis.metricW, rawUvBasis.metricH, shape.pattern, flatCol, faceShade);
+          }
         }
 
         if (uvBasis) {
@@ -1151,6 +1536,7 @@ export function buildBoxFaces(
   z1: number,
   ori: ViewRotation,
   flipZ = false,
+  includeBottom = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   const p000 = P(0, 0, z0);
@@ -1162,13 +1548,24 @@ export function buildBoxFaces(
   const p111 = P(1, 1, z1);
   const p011 = P(0, 1, z1);
 
-  return [
+  const faces: MeshFace[] = [
     { verts: [p001, p011, p111, p101], kind: 'top', faceId: 'top', uvOrigin: p001, uvEndU: p101, uvEndV: p011 },
     { verts: [p010, p110, p111, p011], kind: 'left', faceId: 'wall_pv', uvOrigin: flipZ ? p010 : p011, uvEndU: flipZ ? p110 : p111, uvEndV: flipZ ? p011 : p010 },
     { verts: [p110, p100, p101, p111], kind: 'right', faceId: 'wall_pu', uvOrigin: flipZ ? p110 : p111, uvEndU: flipZ ? p100 : p101, uvEndV: flipZ ? p111 : p110 },
     { verts: [p100, p000, p001, p101], kind: 'slope', faceId: 'wall_nv', uvOrigin: flipZ ? p100 : p101, uvEndU: flipZ ? p000 : p001, uvEndV: flipZ ? p101 : p100 },
     { verts: [p000, p010, p011, p001], kind: 'slope', faceId: 'wall_nu', uvOrigin: flipZ ? p000 : p001, uvEndU: flipZ ? p010 : p011, uvEndV: flipZ ? p001 : p000 },
   ];
+  if (includeBottom) {
+    faces.push({
+      verts: [p000, p100, p110, p010],
+      kind: 'slope',
+      faceId: 'bottom',
+      uvOrigin: p010,
+      uvEndU: p110,
+      uvEndV: p000,
+    });
+  }
+  return faces;
 }
 
 export function buildRightTriPrismFaces(
@@ -1181,9 +1578,10 @@ export function buildRightTriPrismFaces(
   ori: ViewRotation,
   cut: TriPrismCut = 'vertical',
   flipZ = false,
+  includeBottom = false,
 ): MeshFace[] {
   if (cut === 'slope') {
-    return buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, 'ramp', flipZ);
+    return buildWedgeFaces(u0, v0, su, sv, z0, z1, ori, 'ramp', flipZ, includeBottom);
   }
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   // Vertical half-box right triangular prism: right angle at local (0, 0), hypotenuse (0, 1)-(1, 0)
@@ -1194,12 +1592,23 @@ export function buildRightTriPrismFaces(
   const T1 = P(0, 1, z1);
   const T2 = P(1, 0, z1);
 
-  return [
+  const faces: MeshFace[] = [
     { verts: [T0, T1, T2], kind: 'top', faceId: 'top', uvOrigin: T0, uvEndU: T2, uvEndV: T1 },
     { verts: [B1, B2, T2, T1], kind: 'slope', faceId: 'wall_hyp', uvOrigin: flipZ ? B1 : T1, uvEndU: flipZ ? B2 : T2, uvEndV: flipZ ? T1 : B1 },
     { verts: [B0, B1, T1, T0], kind: 'left', faceId: 'wall_nu', uvOrigin: flipZ ? B0 : T0, uvEndU: flipZ ? B1 : T1, uvEndV: flipZ ? T0 : B0 },
     { verts: [B2, B0, T0, T2], kind: 'right', faceId: 'wall_nv', uvOrigin: flipZ ? B2 : T2, uvEndU: flipZ ? B0 : T0, uvEndV: flipZ ? T2 : B2 },
   ];
+  if (includeBottom) {
+    faces.push({
+      verts: [B0, B2, B1],
+      kind: 'slope',
+      faceId: 'bottom',
+      uvOrigin: B0,
+      uvEndU: B2,
+      uvEndV: B1,
+    });
+  }
+  return faces;
 }
 
 export function buildPrismFaces(
@@ -1212,6 +1621,7 @@ export function buildPrismFaces(
   sides: number,
   ori: ViewRotation,
   flipZ = false,
+  includeBottom = false,
 ): MeshFace[] {
   const n = Math.max(3, Math.min(12, Math.round(sides)));
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
@@ -1247,6 +1657,16 @@ export function buildPrismFaces(
       uvEndV: flipZ ? top[i] : bot[i],
     });
   }
+  if (includeBottom) {
+    faces.push({
+      verts: [...bot].reverse(),
+      kind: 'slope',
+      faceId: 'bottom',
+      uvOrigin: P(0, 1, z0),
+      uvEndU: P(1, 1, z0),
+      uvEndV: P(0, 0, z0),
+    });
+  }
   return faces;
 }
 
@@ -1260,6 +1680,7 @@ export function buildWedgeFaces(
   ori: ViewRotation,
   mode: 'ramp' | 'gable',
   flipZ = false,
+  includeBottom = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   const topCap: MeshFace = {
@@ -1284,7 +1705,11 @@ export function buildWedgeFaces(
       { verts: [B, C, E], kind: 'left', faceId: 'tri_pv', uvOrigin: P(0, 1, z1), uvEndU: E, uvEndV: B },
       { verts: [D, A, F], kind: 'slope', faceId: 'tri_nv', uvOrigin: F, uvEndU: P(0, 0, z1), uvEndV: D },
     ];
-    return flipZ ? flipMeshFacesZ(faces, z0, z1, topCap) : faces;
+    if (flipZ) return flipMeshFacesZ(faces, z0, z1, topCap);
+    if (includeBottom) {
+      faces.push({ verts: [A, D, C, B], kind: 'slope', faceId: 'bottom', uvOrigin: B, uvEndU: C, uvEndV: A });
+    }
+    return faces;
   } else {
     // Gable roof: ridge along lu = 0..1 at lv = 0.5, height z1
     const A = P(0, 0, z0);
@@ -1299,7 +1724,11 @@ export function buildWedgeFaces(
       { verts: [A, B, R0], kind: 'slope', faceId: 'gable_nu', uvOrigin: P(0, 0, z1), uvEndU: P(0, 1, z1), uvEndV: A },
       { verts: [C, D, R1], kind: 'slope', faceId: 'gable_pu', uvOrigin: P(1, 1, z1), uvEndU: P(1, 0, z1), uvEndV: C },
     ];
-    return flipZ ? flipMeshFacesZ(faces, z0, z1, topCap) : faces;
+    if (flipZ) return flipMeshFacesZ(faces, z0, z1, topCap);
+    if (includeBottom) {
+      faces.push({ verts: [A, D, C, B], kind: 'slope', faceId: 'bottom', uvOrigin: B, uvEndU: C, uvEndV: A });
+    }
+    return faces;
   }
 }
 
@@ -1312,6 +1741,7 @@ export function buildPyramidFaces(
   z1: number,
   ori: ViewRotation,
   flipZ = false,
+  includeBottom = false,
 ): MeshFace[] {
   const P = (lu: number, lv: number, z: number) => transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, ori);
   const A = P(0, 0, z0);
@@ -1336,7 +1766,12 @@ export function buildPyramidFaces(
     { verts: [D, A, apex], kind: 'slope', faceId: 'pyr_nv', ...makeTriUv(D, A) },
     { verts: [A, B, apex], kind: 'slope', faceId: 'pyr_nu', ...makeTriUv(A, B) },
   ];
-  if (!flipZ) return faces;
+  if (!flipZ) {
+    if (includeBottom) {
+      faces.push({ verts: [A, D, C, B], kind: 'slope', faceId: 'bottom', uvOrigin: B, uvEndU: C, uvEndV: A });
+    }
+    return faces;
+  }
   const topCap: MeshFace = {
     verts: [P(0, 0, z1), P(0, 1, z1), P(1, 1, z1), P(1, 0, z1)],
     kind: 'top',
@@ -1952,6 +2387,387 @@ function renderDomeOrSphere(
   }
 }
 
+function renderTiltedAnalyticalPrimitive(
+  dst: Uint8ClampedArray,
+  w: number,
+  h: number,
+  kind: 'cylinder' | 'cone' | 'dome' | 'sphere',
+  tilt: TiltTransform,
+  shape: ParametricShape,
+  triad: PaletteTriad,
+  originX: number,
+  originY: number,
+) {
+  const rx = Math.max(0.5, tilt.lsu * METRIC_PX_PER_CELL * 0.5);
+  const ry = Math.max(0.5, tilt.lsv * METRIC_PX_PER_CELL * 0.5);
+  const totalH = Math.max(1, tilt.z1 - tilt.z0);
+  const zBotLoc = tilt.z0 - tilt.czView;
+  const zTopLoc = tilt.z1 - tilt.czView;
+  const flipZ = Boolean(shape.flipZ);
+
+  let rawMinX = Infinity, rawMinY = Infinity, rawMaxX = -Infinity, rawMaxY = -Infinity;
+  for (const zc of [tilt.z0, tilt.z1]) {
+    for (const [lu, lv] of [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ]) {
+      const pt = transformLocalPointWithTilt(lu, lv, zc, tilt);
+      const [sx, sy] = isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
+      if (sx < rawMinX) rawMinX = sx;
+      if (sy < rawMinY) rawMinY = sy;
+      if (sx > rawMaxX) rawMaxX = sx;
+      if (sy > rawMaxY) rawMaxY = sy;
+    }
+  }
+
+  const minX = clamp(Math.floor(rawMinX) - 2, -1, w);
+  const maxX = clamp(Math.ceil(rawMaxX) + 2, -1, w);
+  const minY = clamp(Math.floor(rawMinY) - 2, -1, h);
+  const maxY = clamp(Math.ceil(rawMaxY) + 2, -1, h);
+  if (maxX < 0 || minX >= w || maxY < 0 || minY >= h || minX > maxX || minY > maxY) return;
+
+  const bw = maxX - minX + 1;
+  const bh = maxY - minY + 1;
+  const tmpBuf = new Uint8ClampedArray(bw * bh * 4);
+  const capTag = new Uint8Array(bw * bh); // 0 = empty, 1 = curved body, 2 = top/base cap, 3 = second cap
+  const tmpZ = activeRenderAux ? new Float32Array(bw * bh) : null;
+  const tmpSun = activeRenderAux ? new Uint8Array(bw * bh) : null;
+
+  // Constant orthographic isometric camera direction toward viewer in local metric space: D_loc = M^T * (18, 18, 16)
+  const dxL = tilt.m00 * 18 + tilt.m10 * 18 + tilt.m20 * 16;
+  const dyL = tilt.m01 * 18 + tilt.m11 * 18 + tilt.m21 * 16;
+  const dzL = tilt.m02 * 18 + tilt.m12 * 18 + tilt.m22 * 16;
+
+  const invRx2 = 1 / (rx * rx);
+  const invRy2 = 1 / (ry * ry);
+  const invH2 = 1 / (totalH * totalH);
+  const rzSphere = Math.max(0.5, kind === 'sphere' ? totalH * 0.5 : totalH);
+  const invRz2 = 1 / (rzSphere * rzSphere);
+  const zSphereCenterLoc = kind === 'sphere'
+    ? (zBotLoc + zTopLoc) * 0.5
+    : flipZ
+      ? zTopLoc
+      : zBotLoc;
+  const zApexLoc = flipZ ? zBotLoc : zTopLoc;
+  const zBaseLoc = flipZ ? zTopLoc : zBotLoc;
+
+  const aCyl = dxL * dxL * invRx2 + dyL * dyL * invRy2;
+  const aEllip = aCyl + dzL * dzL * invRz2;
+  const aCone = aCyl - dzL * dzL * invH2;
+
+  const useTopPattern = shape.pattern.type === 'roof_grid' || shape.pattern.applyTop;
+  const useWallPattern = shape.pattern.type !== 'none' && shape.pattern.type !== 'roof_grid';
+  const wallH = Math.max(1, Math.round(totalH));
+  const panelW = Math.max(6, Math.round(Math.PI * ((tilt.lsu + tilt.lsv) * 0.5) * 32 * 0.25));
+
+  const shadeFlatOrNormal = (nxV: number, nyV: number, nzV: number, allowRoofColor: boolean): RGBA => {
+    const isTopFlat = Math.abs(nxV) < 1e-4 && Math.abs(nyV) < 1e-4 && nzV > 0;
+    const isLeftPure = Math.abs(nxV) < 1e-4 && nyV > 0 && Math.abs(nzV) < 1e-4;
+    const isRightPure = nxV > 0 && Math.abs(nyV) < 1e-4 && Math.abs(nzV) < 1e-4;
+    if (isTopFlat && allowRoofColor) return triad.top;
+    if (isLeftPure) return triad.left;
+    if (isRightPure) return triad.right;
+    return shadeByNormal(
+      shape.baseColor,
+      nxV,
+      nyV,
+      nzV,
+      shape.autoShade,
+      shape.shadeContrast,
+      allowRoofColor ? shape.roofColor : null,
+    );
+  };
+
+  for (let ly = 0; ly < bh; ly++) {
+    const scy = minY + ly + 0.5;
+    const dyS = scy + tilt.czOut - originY;
+    const dy16 = dyS / 16;
+    for (let lx = 0; lx < bw; lx++) {
+      const scx = minX + lx + 0.5;
+      const dx32 = (scx - originX) / 32;
+      const vu0 = dx32 + dy16;
+      const vv0 = dy16 - dx32;
+      const pxV = (vu0 - tilt.cuView) * METRIC_PX_PER_CELL;
+      const pyV = (vv0 - tilt.cvView) * METRIC_PX_PER_CELL;
+
+      const ox = tilt.m00 * pxV + tilt.m10 * pyV;
+      const oy = tilt.m01 * pxV + tilt.m11 * pyV;
+      const oz = tilt.m02 * pxV + tilt.m12 * pyV;
+
+      let bestT = -Infinity;
+      let hitTag = 0;
+      let hitNxL = 0, hitNyL = 0, hitNzL = 0;
+      let hitQx = 0, hitQy = 0, hitQz = 0;
+
+      if (kind === 'sphere') {
+        const ozc = oz - zSphereCenterLoc;
+        const B = 2 * (ox * dxL * invRx2 + oy * dyL * invRy2 + ozc * dzL * invRz2);
+        const C = ox * ox * invRx2 + oy * oy * invRy2 + ozc * ozc * invRz2 - 1;
+        const disc = B * B - 4 * aEllip * C;
+        if (disc >= 0) {
+          const t = (-B + Math.sqrt(disc)) / (2 * aEllip);
+          const qx = ox + t * dxL;
+          const qy = oy + t * dyL;
+          const qz = oz + t * dzL;
+          bestT = t;
+          hitTag = 1;
+          hitQx = qx; hitQy = qy; hitQz = qz;
+          hitNxL = qx * invRx2;
+          hitNyL = qy * invRy2;
+          hitNzL = (qz - zSphereCenterLoc) * invRz2;
+        }
+      } else if (kind === 'dome') {
+        const ozc = oz - zSphereCenterLoc;
+        const B = 2 * (ox * dxL * invRx2 + oy * dyL * invRy2 + ozc * dzL * invRz2);
+        const C = ox * ox * invRx2 + oy * oy * invRy2 + ozc * ozc * invRz2 - 1;
+        const disc = B * B - 4 * aEllip * C;
+        if (disc >= 0) {
+          const sq = Math.sqrt(disc);
+          const t2 = (-B + sq) / (2 * aEllip);
+          const qz2 = oz + t2 * dzL;
+          const valid2 = flipZ ? qz2 <= zSphereCenterLoc + 1e-4 : qz2 >= zSphereCenterLoc - 1e-4;
+          if (valid2) {
+            bestT = t2;
+            hitTag = 1;
+            hitQx = ox + t2 * dxL;
+            hitQy = oy + t2 * dyL;
+            hitQz = qz2;
+            hitNxL = hitQx * invRx2;
+            hitNyL = hitQy * invRy2;
+            hitNzL = (qz2 - zSphereCenterLoc) * invRz2;
+          }
+        }
+        // Flat base/top disk at qz = zSphereCenterLoc
+        const diskNzL = flipZ ? 1 : -1;
+        if (diskNzL * dzL > 1e-6) {
+          const tDisk = (zSphereCenterLoc - oz) / dzL;
+          if (tDisk > bestT) {
+            const qx = ox + tDisk * dxL;
+            const qy = oy + tDisk * dyL;
+            if (qx * qx * invRx2 + qy * qy * invRy2 <= 1 + 1e-6) {
+              bestT = tDisk;
+              hitTag = 2;
+              hitQx = qx; hitQy = qy; hitQz = zSphereCenterLoc;
+              hitNxL = 0; hitNyL = 0; hitNzL = diskNzL;
+            }
+          }
+        }
+      } else if (kind === 'cylinder') {
+        if (aCyl > 1e-9) {
+          const B = 2 * (ox * dxL * invRx2 + oy * dyL * invRy2);
+          const C = ox * ox * invRx2 + oy * oy * invRy2 - 1;
+          const disc = B * B - 4 * aCyl * C;
+          if (disc >= 0) {
+            const t2 = (-B + Math.sqrt(disc)) / (2 * aCyl);
+            const qz2 = oz + t2 * dzL;
+            if (qz2 >= zBotLoc - 1e-4 && qz2 <= zTopLoc + 1e-4) {
+              bestT = t2;
+              hitTag = 1;
+              hitQx = ox + t2 * dxL;
+              hitQy = oy + t2 * dyL;
+              hitQz = qz2;
+              hitNxL = hitQx * invRx2;
+              hitNyL = hitQy * invRy2;
+              hitNzL = 0;
+            }
+          }
+        }
+        if (dzL > 1e-6) {
+          const tTop = (zTopLoc - oz) / dzL;
+          if (tTop > bestT) {
+            const qx = ox + tTop * dxL;
+            const qy = oy + tTop * dyL;
+            if (qx * qx * invRx2 + qy * qy * invRy2 <= 1 + 1e-6) {
+              bestT = tTop;
+              hitTag = 2;
+              hitQx = qx; hitQy = qy; hitQz = zTopLoc;
+              hitNxL = 0; hitNyL = 0; hitNzL = 1;
+            }
+          }
+        } else if (dzL < -1e-6) {
+          const tBot = (zBotLoc - oz) / dzL;
+          if (tBot > bestT) {
+            const qx = ox + tBot * dxL;
+            const qy = oy + tBot * dyL;
+            if (qx * qx * invRx2 + qy * qy * invRy2 <= 1 + 1e-6) {
+              bestT = tBot;
+              hitTag = 3;
+              hitQx = qx; hitQy = qy; hitQz = zBotLoc;
+              hitNxL = 0; hitNyL = 0; hitNzL = -1;
+            }
+          }
+        }
+      } else {
+        // cone
+        const ozA = oz - zApexLoc;
+        const B = 2 * (ox * dxL * invRx2 + oy * dyL * invRy2 - ozA * dzL * invH2);
+        const C = ox * ox * invRx2 + oy * oy * invRy2 - ozA * ozA * invH2;
+        const testConeRoot = (t: number) => {
+          if (t <= bestT) return;
+          const qz = oz + t * dzL;
+          if (qz < zBotLoc - 1e-4 || qz > zTopLoc + 1e-4) return;
+          const qx = ox + t * dxL;
+          const qy = oy + t * dyL;
+          let nlx = qx * invRx2;
+          let nly = qy * invRy2;
+          let nlz = -(qz - zApexLoc) * invH2;
+          if (Math.hypot(nlx, nly, nlz) < 1e-7) {
+            nlx = 1 / rx;
+            nly = 1 / ry;
+            nlz = (flipZ ? -1 : 1) / totalH;
+          }
+          if (nlx * dxL + nly * dyL + nlz * dzL < -1e-4) return;
+          bestT = t;
+          hitTag = 1;
+          hitQx = qx; hitQy = qy; hitQz = qz;
+          hitNxL = nlx; hitNyL = nly; hitNzL = nlz;
+        };
+        if (Math.abs(aCone) < 1e-9) {
+          if (Math.abs(B) > 1e-9) testConeRoot(-C / B);
+        } else {
+          const disc = B * B - 4 * aCone * C;
+          if (disc >= 0) {
+            const sq = Math.sqrt(disc);
+            const inv2A = 1 / (2 * aCone);
+            testConeRoot((-B - sq) * inv2A);
+            testConeRoot((-B + sq) * inv2A);
+          }
+        }
+        const diskNzL = flipZ ? 1 : -1;
+        if (diskNzL * dzL > 1e-6) {
+          const tDisk = (zBaseLoc - oz) / dzL;
+          if (tDisk > bestT) {
+            const qx = ox + tDisk * dxL;
+            const qy = oy + tDisk * dyL;
+            if (qx * qx * invRx2 + qy * qy * invRy2 <= 1 + 1e-6) {
+              bestT = tDisk;
+              hitTag = 2;
+              hitQx = qx; hitQy = qy; hitQz = zBaseLoc;
+              hitNxL = 0; hitNyL = 0; hitNzL = diskNzL;
+            }
+          }
+        }
+      }
+
+      if (hitTag === 0) continue;
+
+      const nxV = tilt.m00 * hitNxL + tilt.m01 * hitNyL + tilt.m02 * hitNzL;
+      const nyV = tilt.m10 * hitNxL + tilt.m11 * hitNyL + tilt.m12 * hitNzL;
+      const nzV = tilt.m20 * hitNxL + tilt.m21 * hitNyL + tilt.m22 * hitNzL;
+      const nLen = Math.hypot(nxV, nyV, nzV) || 1;
+
+      const allowRoofColor =
+        hitTag >= 2 ||
+        kind === 'sphere' ||
+        (kind === 'dome' && !flipZ) ||
+        (kind === 'cone' && !flipZ) ||
+        nzV / nLen > 0.7;
+
+      let col = hitTag >= 2
+        ? shadeFlatOrNormal(nxV, nyV, nzV, allowRoofColor)
+        : shadeByNormal(
+            shape.baseColor,
+            nxV,
+            nyV,
+            nzV,
+            shape.autoShade,
+            shape.shadeContrast,
+            allowRoofColor ? shape.roofColor : null,
+          );
+
+      if (useTopPattern && (hitTag >= 2 || ((kind === 'sphere' || kind === 'dome' || kind === 'cone') && nzV / nLen > 0.45))) {
+        const luFrac = clamp(hitQx / (2 * rx) + 0.5, 0, 1);
+        const lvFrac = clamp(hitQy / (2 * ry) + 0.5, 0, 1);
+        col = sampleTopGridColor(luFrac, lvFrac, tilt.lsu, tilt.lsv, col, shape.pattern);
+      } else if (useWallPattern && hitTag === 1 && (kind === 'cylinder' || kind === 'cone')) {
+        const ang = Math.atan2(hitQy / ry, hitQx / rx);
+        const uWrap = (ang / (Math.PI * 2) + 1) % 1;
+        const uPanel = uWrap * 4 - Math.floor(uWrap * 4);
+        const wx = Math.floor(uPanel * panelW);
+        const vNorm = clamp((hitQz - zBotLoc) / totalH, 0, 1);
+        const wy = Math.floor((flipZ ? vNorm : 1 - vNorm) * wallH);
+        col = sampleWallPattern(wx, wy, panelW, wallH, shape.pattern, col, 'curve');
+      }
+
+      const li = ly * bw + lx;
+      const di = li * 4;
+      tmpBuf[di] = col.r;
+      tmpBuf[di + 1] = col.g;
+      tmpBuf[di + 2] = col.b;
+      tmpBuf[di + 3] = 255;
+      capTag[li] = hitTag;
+      if (tmpZ && tmpSun) {
+        tmpZ[li] = tilt.czOut + 16 * bestT;
+        tmpSun[li] = classifySunFacingMetricNormal(nxV, nyV, nzV);
+      }
+    }
+  }
+
+  // Rim highlight between flat cap disk and curved flank
+  if (shape.edgeHighlight && kind !== 'sphere') {
+    for (let ly = 0; ly < bh; ly++) {
+      for (let lx = 0; lx < bw; lx++) {
+        const idx = ly * bw + lx;
+        if (capTag[idx] < 2) continue;
+        const nearCurved =
+          (ly + 1 < bh && capTag[idx + bw] === 1) ||
+          (ly > 0 && capTag[idx - bw] === 1) ||
+          (lx + 1 < bw && capTag[idx + 1] === 1) ||
+          (lx > 0 && capTag[idx - 1] === 1);
+        if (nearCurved) {
+          setPixel(tmpBuf, bw, bh, lx, ly, triad.highlight);
+        }
+      }
+    }
+  }
+
+  if (shape.outlineMode !== 'none') {
+    if (shape.outlineMode === 'all_edges' && kind !== 'sphere') {
+      for (let ly = 0; ly < bh; ly++) {
+        for (let lx = 0; lx < bw; lx++) {
+          const idx = ly * bw + lx;
+          if (capTag[idx] < 2) continue;
+          const nearCurved =
+            (ly + 1 < bh && capTag[idx + bw] === 1) ||
+            (ly > 0 && capTag[idx - bw] === 1) ||
+            (lx + 1 < bw && capTag[idx + 1] === 1) ||
+            (lx > 0 && capTag[idx - 1] === 1);
+          if (nearCurved) {
+            setPixel(tmpBuf, bw, bh, lx, ly, triad.outline);
+          }
+        }
+      }
+    }
+    applyInnerSilhouetteOutline(tmpBuf, bw, bh, triad.outline);
+  }
+
+  const pyStart = Math.max(0, minY);
+  const pyEnd = Math.min(h - 1, maxY);
+  const pxStart = Math.max(0, minX);
+  const pxEnd = Math.min(w - 1, maxX);
+  for (let py = pyStart; py <= pyEnd; py++) {
+    const ly = py - minY;
+    for (let px = pxStart; px <= pxEnd; px++) {
+      const li = ly * bw + (px - minX);
+      const si = li * 4;
+      if (tmpBuf[si + 3] > 0) {
+        const di = (py * w + px) * 4;
+        dst[di] = tmpBuf[si];
+        dst[di + 1] = tmpBuf[si + 1];
+        dst[di + 2] = tmpBuf[si + 2];
+        dst[di + 3] = 255;
+        if (activeRenderAux && tmpZ && tmpSun) {
+          const pIdx = py * w + px;
+          activeRenderAux.zData[pIdx] = tmpZ[li];
+          activeRenderAux.sunFacing[pIdx] = tmpSun[li];
+        }
+      }
+    }
+  }
+}
+
 const CREASE_COS = 0.80; // ~37deg crease angle threshold preserves hard polygonal edges
 
 type Norm3 = [number, number, number];
@@ -2153,6 +2969,14 @@ function renderLoftColumn(
   if (rings.length < 2) return;
 
   const numRings = rings.length;
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(u0, v0, su, sv, z0, z1, viewOri, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+  const toViewPt = (lu: number, lv: number, z: number): Vec3 =>
+    tilt
+      ? transformLocalPointWithTilt(lu, lv, z, tilt)
+      : transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, viewOri);
+
   const ringsView: Vec3[][] = new Array(numRings);
   const ringsScreen: [number, number][][] = new Array(numRings);
   let meshMinX = Infinity, meshMinY = Infinity, meshMaxX = -Infinity, meshMaxY = -Infinity;
@@ -2163,7 +2987,7 @@ function renderLoftColumn(
     const vArr: Vec3[] = new Array(sampleCount);
     const sArr: [number, number][] = new Array(sampleCount);
     for (let j = 0; j < sampleCount; j++) {
-      const pt3 = transformLocalToViewPoint(pts[j][0], pts[j][1], zRing, u0, v0, su, sv, viewOri);
+      const pt3 = toViewPt(pts[j][0], pts[j][1], zRing);
       const sc = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
       vArr[j] = pt3;
       sArr[j] = sc;
@@ -2188,7 +3012,7 @@ function renderLoftColumn(
       const vArr: Vec3[] = new Array(sampleCount);
       const sArr: [number, number][] = new Array(sampleCount);
       for (let j = 0; j < sampleCount; j++) {
-        const pt3 = transformLocalToViewPoint(pts[j][0], pts[j][1], zRing, u0, v0, su, sv, viewOri);
+        const pt3 = toViewPt(pts[j][0], pts[j][1], zRing);
         const sc = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
         vArr[j] = pt3;
         sArr[j] = sc;
@@ -2247,7 +3071,7 @@ function renderLoftColumn(
     const nz = -(e1x * e2y - e1y * e2x);
     const nLen = Math.hypot(nx, ny, nz) || 1;
     const useSmooth = Boolean(shape.autoShade && nBuf && normalsDifferFlat(nBuf, nOffA, nOffB, nOffC));
-    const isFlatUp = nz / nLen > 0.96 && !useSmooth;
+    const isFlatUp = !tilt && nz / nLen > 0.96 && !useSmooth;
 
     const flatCol = useSmooth
       ? shape.baseColor
@@ -2400,13 +3224,64 @@ function renderLoftColumn(
     }
   }
 
-  // Helper: scanline fill a horizontal cap (with optional inner cutout hole)
-  const rasterHorizontalCap = (
+  // Helper: scanline fill a planar cap (horizontal or tilted, with optional inner cutout hole)
+  const rasterPlanarCap = (
     outerCapPoly: [number, number][],
     innerHolePoly: [number, number][] | null,
-    zCap: number,
-    capBaseCol: RGBA,
+    zLocalPlane: number,
+    nLocalZ: 1 | -1,
+    uprightCol: RGBA,
+    isFloorCap = false,
   ) => {
+    let capCol = uprightCol;
+    let capSunBit: 0 | 1 | 2 = 2;
+    let p0z = zLocalPlane, dz1 = 0, dz2 = 0;
+    let s0x = 0, s0y = 0, dux = 1, duy = 0, dvx = 0, dvy = 1, invDet = 0;
+    let useTiltedPlane = false;
+
+    if (tilt) {
+      const [nxV, nyV, nzV] = tiltNormalToView(0, 0, nLocalZ, tilt);
+      if (nxV * 18 + nyV * 18 + nzV * 16 <= 1e-3) return; // Back-facing cap
+      const P0 = transformLocalPointWithTilt(0, 0, zLocalPlane, tilt);
+      const P1 = transformLocalPointWithTilt(1, 0, zLocalPlane, tilt);
+      const P2 = transformLocalPointWithTilt(0, 1, zLocalPlane, tilt);
+      const S0 = isoToScreenPx(P0.x, P0.y, P0.z, originX, originY);
+      const S1 = isoToScreenPx(P1.x, P1.y, P1.z, originX, originY);
+      const S2 = isoToScreenPx(P2.x, P2.y, P2.z, originX, originY);
+      s0x = S0[0]; s0y = S0[1];
+      dux = S1[0] - s0x; duy = S1[1] - s0y;
+      dvx = S2[0] - s0x; dvy = S2[1] - s0y;
+      const det = dux * dvy - duy * dvx;
+      if (Math.abs(det) < 1e-5) return;
+      invDet = 1 / det;
+      p0z = P0.z;
+      dz1 = P1.z - P0.z;
+      dz2 = P2.z - P0.z;
+      useTiltedPlane = true;
+
+      const isTopFlat = Math.abs(nxV) < 1e-4 && Math.abs(nyV) < 1e-4 && nzV > 0;
+      const isLeftPure = Math.abs(nxV) < 1e-4 && nyV > 0 && Math.abs(nzV) < 1e-4;
+      const isRightPure = nxV > 0 && Math.abs(nyV) < 1e-4 && Math.abs(nzV) < 1e-4;
+      if (isTopFlat) capCol = triad.top;
+      else if (isLeftPure) capCol = triad.left;
+      else if (isRightPure) capCol = triad.right;
+      else {
+        capCol = shadeByNormal(
+          shape.baseColor,
+          nxV,
+          nyV,
+          nzV,
+          shape.autoShade,
+          shape.shadeContrast,
+          nLocalZ > 0 ? shape.roofColor : null,
+        );
+      }
+      if (isFloorCap && shape.autoShade) {
+        capCol = shadeColorHsv(capCol, 1.04, 0.86);
+      }
+      capSunBit = classifySunFacingMetricNormal(nxV, nyV, nzV);
+    }
+
     let capMinY = Infinity, capMaxY = -Infinity;
     for (const [, sy] of outerCapPoly) {
       if (sy < capMinY) capMinY = sy;
@@ -2454,18 +3329,31 @@ function renderLoftColumn(
         const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
         for (let px = xStart; px <= xEnd; px++) {
           const idx = ly * bw + (px - bMinX);
+          let zCap = zLocalPlane;
+          let luFrac = 0, lvFrac = 0;
+          if (useTiltedPlane) {
+            const rx = px + 0.5 - s0x;
+            const ry = scy - s0y;
+            luFrac = (rx * dvy - ry * dvx) * invDet;
+            lvFrac = (dux * ry - duy * rx) * invDet;
+            zCap = p0z + luFrac * dz1 + lvFrac * dz2;
+          }
           if (zCap < zDepth[idx] - 1e-3) continue;
 
-          let col = capBaseCol;
+          let col = capCol;
           if (useTopPattern) {
-            const dx = px + 0.5 - originX;
-            const dy = (scy + zCap) - originY;
-            const pu = dx / 32 + dy / 16;
-            const pv = dy / 16 - dx / 32;
-            const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
-            const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
-            const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
-            col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, capBaseCol, shape.pattern);
+            if (useTiltedPlane) {
+              col = sampleTopGridColor(clamp(luFrac, 0, 1), clamp(lvFrac, 0, 1), lsu, lsv, capCol, shape.pattern);
+            } else {
+              const dx = px + 0.5 - originX;
+              const dy = (scy + zCap) - originY;
+              const pu = dx / 32 + dy / 16;
+              const pv = dy / 16 - dx / 32;
+              const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
+              const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
+              const loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
+              col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, capCol, shape.pattern);
+            }
           }
 
           const di = idx * 4;
@@ -2475,7 +3363,7 @@ function renderLoftColumn(
           tmpBuf[di + 3] = 255;
           zDepth[idx] = zCap;
           faceTag[idx] = 2;
-          if (tmpSun) tmpSun[idx] = 2;
+          if (tmpSun) tmpSun[idx] = capSunBit;
         }
       }
     }
@@ -2487,20 +3375,41 @@ function renderLoftColumn(
     const floorCol = shape.autoShade
       ? shadeColorHsv(triad.top, 1.04, 0.86)
       : triad.top;
-    rasterHorizontalCap(inRingsScreen[0], null, zFloor, floorCol);
+    rasterPlanarCap(inRingsScreen[0], null, zFloor, 1, floorCol, true);
+  } else if (tilt && isHollow && flipZ && rawLoft.innerFloorRing && inRingsScreen && inRingsScreen.length >= 2) {
+    const zFloor = z0 + (1 - rawLoft.innerFloorRing.t) * (z1 - z0);
+    const floorCol = shape.autoShade
+      ? shadeColorHsv(triad.top, 1.04, 0.86)
+      : triad.top;
+    rasterPlanarCap(inRingsScreen[inRingsScreen.length - 1], null, zFloor, -1, floorCol, true);
   }
 
   // 4. Top cap (solid or annular ring when hollow; solid when flipped cup with recessed floor)
   const topPoly = ringsScreen[numRings - 1];
   const topInnerPoly = inRingsScreen && !hasFlippedSolidTop ? inRingsScreen[inRingsScreen.length - 1] : null;
-  rasterHorizontalCap(topPoly, topInnerPoly, zTopCap, triad.top);
+  rasterPlanarCap(topPoly, topInnerPoly, zTopCap, 1, triad.top, false);
+
+  // 5. Bottom cap when tilted (solid or annular ring if hollow through-hole / flipped cup)
+  if (tilt) {
+    const botPoly = ringsScreen[0];
+    const botInnerPoly =
+      inRingsScreen && (flipZ || !rawLoft.innerFloorRing) ? inRingsScreen[0] : null;
+    rasterPlanarCap(botPoly, botInnerPoly, zBotCap, -1, triad.top, false);
+  }
 
   // Front top-rim highlight
   if (shape.edgeHighlight) {
-    for (let ly = 0; ly < bh - 1; ly++) {
+    for (let ly = 0; ly < bh; ly++) {
       for (let lx = 0; lx < bw; lx++) {
         const idx = ly * bw + lx;
-        if (faceTag[idx] === 2 && faceTag[idx + bw] === 1) {
+        if (faceTag[idx] !== 2) continue;
+        const nearWall = tilt
+          ? (ly + 1 < bh && faceTag[idx + bw] === 1) ||
+            (ly > 0 && faceTag[idx - bw] === 1) ||
+            (lx + 1 < bw && faceTag[idx + 1] === 1) ||
+            (lx > 0 && faceTag[idx - 1] === 1)
+          : ly + 1 < bh && faceTag[idx + bw] === 1;
+        if (nearWall) {
           const di = idx * 4;
           tmpBuf[di] = triad.highlight.r;
           tmpBuf[di + 1] = triad.highlight.g;
@@ -2619,6 +3528,14 @@ function renderArch(
   }
 
   const flipZ = Boolean(shape.flipZ);
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(u0, v0, su, sv, z0, z1, viewOri, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+  const toArchPt = (s: number, lv: number, z: number): Vec3 =>
+    tilt
+      ? transformLocalPointWithTilt(s, lv, z, tilt)
+      : transformLocalToViewPoint(s, lv, z, u0, v0, su, sv, viewOri);
+
   const quads: ExtrudedQuad[] = [];
   for (const e of cs.edges) {
     const sA = flipZ ? e.s1 : e.s0;
@@ -2627,10 +3544,10 @@ function renderArch(
     const hB = flipZ ? 1 - e.h0 : e.h1;
     const zA = z0 + hA * heightPx;
     const zB = z0 + hB * heightPx;
-    const A0 = transformLocalToViewPoint(sA, 0, zA, u0, v0, su, sv, viewOri);
-    const B0 = transformLocalToViewPoint(sB, 0, zB, u0, v0, su, sv, viewOri);
-    const B1 = transformLocalToViewPoint(sB, 1, zB, u0, v0, su, sv, viewOri);
-    const A1 = transformLocalToViewPoint(sA, 1, zA, u0, v0, su, sv, viewOri);
+    const A0 = toArchPt(sA, 0, zA);
+    const B0 = toArchPt(sB, 0, zB);
+    const B1 = toArchPt(sB, 1, zB);
+    const A1 = toArchPt(sA, 1, zA);
     const sA0 = isoToScreenPx(A0.x, A0.y, A0.z, originX, originY);
     const sB0 = isoToScreenPx(B0.x, B0.y, B0.z, originX, originY);
     const sB1 = isoToScreenPx(B1.x, B1.y, B1.z, originX, originY);
@@ -2646,7 +3563,7 @@ function renderArch(
           ? 'bottom'
           : e.tag
       : e.tag;
-    if (mappedTag !== 'bottom') {
+    if (tilt || mappedTag !== 'bottom') {
       quads.push({ A0, sA0, B0, sB0, B1, sB1, A1, sA1, h0: hA, h1: hB, tag: mappedTag });
     }
   }
@@ -2697,7 +3614,7 @@ function renderArch(
     const nLen = Math.hypot(nx, ny, nz) || 1;
     const uz = nz / nLen;
     const useSmooth = Boolean(shape.autoShade && nA && nB && nC && normalsDiffer(nA, nB, nC));
-    const isFlatUp = tag === 'top_flat' || (tag !== 'inner' && uz > 0.96 && !useSmooth);
+    const isFlatUp = !tilt && (tag === 'top_flat' || (tag !== 'inner' && uz > 0.96 && !useSmooth));
     const isLeftPure = tag !== 'inner' && !useSmooth && Math.abs(nx) < 1e-4 && ny > 0 && Math.abs(nz) < 1e-4;
     const isRightPure = tag !== 'inner' && !useSmooth && nx > 0 && Math.abs(ny) < 1e-4 && Math.abs(nz) < 1e-4;
 
@@ -2732,7 +3649,7 @@ function renderArch(
     const dA = A.x + A.y + A.z;
     const dB = B.x + B.y + B.z;
     const dC = C.x + C.y + C.z;
-    const outTag = isFlatUp ? 4 : tag === 'inner' ? 3 : 2;
+    const outTag = tag === 'top_flat' || isFlatUp ? 4 : tag === 'inner' ? 3 : 2;
     const faceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
 
     const invArea = 1 / area2;
@@ -2812,7 +3729,7 @@ function renderArch(
         zDepth[idx] = depth;
         faceTag[idx] = outTag;
         if (tmpZ && tmpSun) {
-          tmpZ[idx] = clamp(vz, z0, z1);
+          tmpZ[idx] = tilt ? vz : clamp(vz, z0, z1);
           tmpSun[idx] = isFlatUp ? 2 : classifySunFacingMetricNormal(sunNx, sunNy, sunNz);
         }
       }
@@ -2884,87 +3801,193 @@ function renderArch(
     );
   }
 
-  // Scanline-rasterize the camera-facing arch end-cap (lv = 1 for viewOri 0/3; lv = 0 for viewOri 1/2)
-  const lvCap = viewOri === 0 || viewOri === 3 ? 1 : 0;
-  const isLeftCap = viewOri === 0 || viewOri === 2; // +V front-left wall vs +U front-right wall
-  const capBaseCol = isLeftCap ? triad.left : triad.right;
-  const capFaceShade: 'left' | 'right' = isLeftCap ? 'left' : 'right';
+  // Scanline-rasterize camera-facing arch end-cap(s)
+  if (!tilt) {
+    const lvCap = viewOri === 0 || viewOri === 3 ? 1 : 0;
+    const isLeftCap = viewOri === 0 || viewOri === 2; // +V front-left wall vs +U front-right wall
+    const capBaseCol = isLeftCap ? triad.left : triad.right;
+    const capFaceShade: 'left' | 'right' = isLeftCap ? 'left' : 'right';
 
-  const capCorner0 = transformLocalToViewPoint(0, lvCap, z0, u0, v0, su, sv, viewOri);
-  const capCorner1 = transformLocalToViewPoint(1, lvCap, z0, u0, v0, su, sv, viewOri);
-  const [capX0] = isoToScreenPx(capCorner0.x, capCorner0.y, capCorner0.z, originX, originY);
-  const [capX1] = isoToScreenPx(capCorner1.x, capCorner1.y, capCorner1.z, originX, originY);
-  const capMinSx = Math.min(capX0, capX1);
-  const capSpanW = Math.max(1, Math.round(Math.abs(capX1 - capX0)));
+    const capCorner0 = transformLocalToViewPoint(0, lvCap, z0, u0, v0, su, sv, viewOri);
+    const capCorner1 = transformLocalToViewPoint(1, lvCap, z0, u0, v0, su, sv, viewOri);
+    const [capX0] = isoToScreenPx(capCorner0.x, capCorner0.y, capCorner0.z, originX, originY);
+    const [capX1] = isoToScreenPx(capCorner1.x, capCorner1.y, capCorner1.z, originX, originY);
+    const capMinSx = Math.min(capX0, capX1);
+    const capSpanW = Math.max(1, Math.round(Math.abs(capX1 - capX0)));
 
-  const capPoly: [number, number][] = cs.poly.map(([s, hFrac]) => {
-    const hUse = flipZ ? 1 - hFrac : hFrac;
-    const pt = transformLocalToViewPoint(s, lvCap, z0 + hUse * heightPx, u0, v0, su, sv, viewOri);
-    return isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
-  });
+    const capPoly: [number, number][] = cs.poly.map(([s, hFrac]) => {
+      const hUse = flipZ ? 1 - hFrac : hFrac;
+      const pt = transformLocalToViewPoint(s, lvCap, z0 + hUse * heightPx, u0, v0, su, sv, viewOri);
+      return isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
+    });
 
-  let capMinY = Infinity, capMaxY = -Infinity;
-  for (const [, sy] of capPoly) {
-    if (sy < capMinY) capMinY = sy;
-    if (sy > capMaxY) capMaxY = sy;
-  }
-  const scanStartY = Math.max(bMinY, Math.floor(capMinY));
-  const scanEndY = Math.min(bMaxY, Math.ceil(capMaxY));
-  const crossings: { x: number; dir: number }[] = [];
-  const capCount = capPoly.length;
+    let capMinY = Infinity, capMaxY = -Infinity;
+    for (const [, sy] of capPoly) {
+      if (sy < capMinY) capMinY = sy;
+      if (sy > capMaxY) capMaxY = sy;
+    }
+    const scanStartY = Math.max(bMinY, Math.floor(capMinY));
+    const scanEndY = Math.min(bMaxY, Math.ceil(capMaxY));
+    const crossings: { x: number; dir: number }[] = [];
+    const capCount = capPoly.length;
 
-  for (let py = scanStartY; py <= scanEndY; py++) {
-    const scy = py + 0.5;
-    crossings.length = 0;
-    for (let j = 0; j < capCount; j++) {
-      const [ax, ay] = capPoly[j];
-      const [bx, by] = capPoly[(j + 1) % capCount];
-      if (ay <= scy && by > scy) {
-        crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: 1 });
-      } else if (by <= scy && ay > scy) {
-        crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: -1 });
+    for (let py = scanStartY; py <= scanEndY; py++) {
+      const scy = py + 0.5;
+      crossings.length = 0;
+      for (let j = 0; j < capCount; j++) {
+        const [ax, ay] = capPoly[j];
+        const [bx, by] = capPoly[(j + 1) % capCount];
+        if (ay <= scy && by > scy) {
+          crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: 1 });
+        } else if (by <= scy && ay > scy) {
+          crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: -1 });
+        }
+      }
+      if (crossings.length < 2) continue;
+      crossings.sort((p, q) => p.x - q.x);
+
+      const ly = py - bMinY;
+      let winding = 0;
+      for (let k = 0; k < crossings.length - 1; k++) {
+        winding += crossings[k].dir;
+        if (winding === 0) continue;
+        const xStart = Math.max(bMinX, Math.ceil(crossings[k].x - 0.5));
+        const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
+        for (let px = xStart; px <= xEnd; px++) {
+          const scx = px + 0.5;
+          let x: number, y: number;
+          if (isLeftCap) {
+            y = v0 + sv;
+            x = y + (scx - originX) / 16;
+          } else {
+            x = u0 + su;
+            y = x - (scx - originX) / 16;
+          }
+          const z = originY - scy + (x + y) * 8;
+          const idx = ly * bw + (px - bMinX);
+
+          let col = capBaseCol;
+          if (useWallPattern) {
+            const wx = px - Math.floor(capMinSx);
+            const wy = Math.max(0, Math.floor(z1 - z));
+            col = sampleWallPattern(wx, wy, capSpanW, wallH, shape.pattern, capBaseCol, capFaceShade);
+          }
+
+          const di = idx * 4;
+          tmpBuf[di] = col.r;
+          tmpBuf[di + 1] = col.g;
+          tmpBuf[di + 2] = col.b;
+          tmpBuf[di + 3] = 255;
+          zDepth[idx] = x + y + z;
+          faceTag[idx] = 1;
+          if (tmpZ && tmpSun) {
+            tmpZ[idx] = clamp(z, z0, z1);
+            tmpSun[idx] = isLeftCap ? 2 : 0;
+          }
+        }
       }
     }
-    if (crossings.length < 2) continue;
-    crossings.sort((p, q) => p.x - q.x);
+  } else {
+    const capSpanW = Math.max(4, Math.round(spanCells * 16));
+    const crossings: { x: number; dir: number }[] = [];
+    for (const lvCap of [0, 1] as const) {
+      const [nxV, nyV, nzV] = tiltNormalToView(0, lvCap === 1 ? 1 : -1, 0, tilt);
+      if (nxV * 18 + nyV * 18 + nzV * 16 <= 1e-3) continue; // Back-facing cap
 
-    const ly = py - bMinY;
-    let winding = 0;
-    for (let k = 0; k < crossings.length - 1; k++) {
-      winding += crossings[k].dir;
-      if (winding === 0) continue;
-      const xStart = Math.max(bMinX, Math.ceil(crossings[k].x - 0.5));
-      const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
-      for (let px = xStart; px <= xEnd; px++) {
-        const scx = px + 0.5;
-        let x: number, y: number;
-        if (isLeftCap) {
-          y = v0 + sv;
-          x = y + (scx - originX) / 16;
-        } else {
-          x = u0 + su;
-          y = x - (scx - originX) / 16;
+      const P0 = transformLocalPointWithTilt(0, lvCap, z0, tilt);
+      const P1 = transformLocalPointWithTilt(1, lvCap, z0, tilt);
+      const P2 = transformLocalPointWithTilt(0, lvCap, z1, tilt);
+      const S0 = isoToScreenPx(P0.x, P0.y, P0.z, originX, originY);
+      const S1 = isoToScreenPx(P1.x, P1.y, P1.z, originX, originY);
+      const S2 = isoToScreenPx(P2.x, P2.y, P2.z, originX, originY);
+      const dux = S1[0] - S0[0], duy = S1[1] - S0[1];
+      const dvx = S2[0] - S0[0], dvy = S2[1] - S0[1];
+      const det = dux * dvy - duy * dvx;
+      if (Math.abs(det) < 1e-5) continue;
+      const invDet = 1 / det;
+
+      const isTopFlat = Math.abs(nxV) < 1e-4 && Math.abs(nyV) < 1e-4 && nzV > 0;
+      const isLeftPure = Math.abs(nxV) < 1e-4 && nyV > 0 && Math.abs(nzV) < 1e-4;
+      const isRightPure = nxV > 0 && Math.abs(nyV) < 1e-4 && Math.abs(nzV) < 1e-4;
+      const capBaseCol = isTopFlat
+        ? triad.top
+        : isLeftPure
+          ? triad.left
+          : isRightPure
+            ? triad.right
+            : shadeByNormal(shape.baseColor, nxV, nyV, nzV, shape.autoShade, shape.shadeContrast, shape.roofColor);
+      const capFaceShade: 'left' | 'right' | 'curve' = isRightPure ? 'right' : isLeftPure ? 'left' : 'curve';
+      const capSunBit = classifySunFacingMetricNormal(nxV, nyV, nzV);
+
+      const capPoly: [number, number][] = cs.poly.map(([s, hFrac]) => {
+        const hUse = flipZ ? 1 - hFrac : hFrac;
+        const pt = transformLocalPointWithTilt(s, lvCap, z0 + hUse * heightPx, tilt);
+        return isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
+      });
+      let capMinY = Infinity, capMaxY = -Infinity;
+      for (const [, sy] of capPoly) {
+        if (sy < capMinY) capMinY = sy;
+        if (sy > capMaxY) capMaxY = sy;
+      }
+      const scanStartY = Math.max(bMinY, Math.floor(capMinY));
+      const scanEndY = Math.min(bMaxY, Math.ceil(capMaxY));
+      const capCount = capPoly.length;
+      const d0 = P0.x + P0.y + P0.z;
+      const dd1 = (P1.x + P1.y + P1.z) - d0;
+      const dd2 = (P2.x + P2.y + P2.z) - d0;
+      const dz1 = P1.z - P0.z;
+      const dz2 = P2.z - P0.z;
+
+      for (let py = scanStartY; py <= scanEndY; py++) {
+        const scy = py + 0.5;
+        crossings.length = 0;
+        for (let j = 0; j < capCount; j++) {
+          const [ax, ay] = capPoly[j];
+          const [bx, by] = capPoly[(j + 1) % capCount];
+          if (ay <= scy && by > scy) {
+            crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: 1 });
+          } else if (by <= scy && ay > scy) {
+            crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: -1 });
+          }
         }
-        const z = originY - scy + (x + y) * 8;
-        const idx = ly * bw + (px - bMinX);
+        if (crossings.length < 2) continue;
+        crossings.sort((p, q) => p.x - q.x);
 
-        let col = capBaseCol;
-        if (useWallPattern) {
-          const wx = px - Math.floor(capMinSx);
-          const wy = Math.max(0, Math.floor(z1 - z));
-          col = sampleWallPattern(wx, wy, capSpanW, wallH, shape.pattern, capBaseCol, capFaceShade);
-        }
+        const ly = py - bMinY;
+        let winding = 0;
+        for (let k = 0; k < crossings.length - 1; k++) {
+          winding += crossings[k].dir;
+          if (winding === 0) continue;
+          const xStart = Math.max(bMinX, Math.ceil(crossings[k].x - 0.5));
+          const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
+          for (let px = xStart; px <= xEnd; px++) {
+            const rx = px + 0.5 - S0[0];
+            const ry = scy - S0[1];
+            const sFrac = (rx * dvy - ry * dvx) * invDet;
+            const hFrac = (dux * ry - duy * rx) * invDet;
+            const depth = d0 + sFrac * dd1 + hFrac * dd2;
+            const idx = ly * bw + (px - bMinX);
+            if (depth < zDepth[idx] - 1e-4) continue;
 
-        const di = idx * 4;
-        tmpBuf[di] = col.r;
-        tmpBuf[di + 1] = col.g;
-        tmpBuf[di + 2] = col.b;
-        tmpBuf[di + 3] = 255;
-        zDepth[idx] = x + y + z;
-        faceTag[idx] = 1;
-        if (tmpZ && tmpSun) {
-          tmpZ[idx] = clamp(z, z0, z1);
-          tmpSun[idx] = isLeftCap ? 2 : 0;
+            let col = capBaseCol;
+            if (useWallPattern) {
+              const wx = Math.floor(clamp(sFrac, 0, 0.9999) * capSpanW);
+              const wy = Math.floor((1 - clamp(hFrac, 0, 1)) * wallH);
+              col = sampleWallPattern(wx, wy, capSpanW, wallH, shape.pattern, capBaseCol, capFaceShade);
+            }
+
+            const di = idx * 4;
+            tmpBuf[di] = col.r;
+            tmpBuf[di + 1] = col.g;
+            tmpBuf[di + 2] = col.b;
+            tmpBuf[di + 3] = 255;
+            zDepth[idx] = depth;
+            faceTag[idx] = 1;
+            if (tmpZ && tmpSun) {
+              tmpZ[idx] = P0.z + sFrac * dz1 + hFrac * dz2;
+              tmpSun[idx] = capSunBit;
+            }
+          }
         }
       }
     }
@@ -2978,7 +4001,10 @@ function renderArch(
         const t = faceTag[idx];
         const tBelow = faceTag[idx + bw];
         const isExtradosRim = (t === 2 || t === 4) && tBelow === 1;
-        const isPortalDeckRim = t === 4 && tBelow === 2;
+        const isPortalDeckRim =
+          (!tilt || Boolean(shape.archHollow && shape.archHollowStyle === 'portal')) &&
+          t === 4 &&
+          tBelow === 2;
         const isHollowIntradosRim = t === 1 && tBelow === 3;
         if (isExtradosRim || isPortalDeckRim || isHollowIntradosRim) {
           const di = idx * 4;
@@ -3091,6 +4117,14 @@ function renderMultiSectionColumn(
   const vertCount = rings[0].pts.length;
   if (vertCount < 3) return;
 
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(u0, v0, su, sv, z0, z1, viewOri, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+  const toColPt = (lu: number, lv: number, z: number): Vec3 =>
+    tilt
+      ? transformLocalPointWithTilt(lu, lv, z, tilt)
+      : transformLocalToViewPoint(lu, lv, z, u0, v0, su, sv, viewOri);
+
   const ringsView: Vec3[][] = new Array(numRings);
   const ringsScreen: [number, number][][] = new Array(numRings);
   let meshMinX = Infinity, meshMinY = Infinity, meshMaxX = -Infinity, meshMaxY = -Infinity;
@@ -3101,7 +4135,7 @@ function renderMultiSectionColumn(
     const vArr: Vec3[] = new Array(vertCount);
     const sArr: [number, number][] = new Array(vertCount);
     for (let j = 0; j < vertCount; j++) {
-      const pt3 = transformLocalToViewPoint(pts[j][0], pts[j][1], zRing, u0, v0, su, sv, viewOri);
+      const pt3 = toColPt(pts[j][0], pts[j][1], zRing);
       const sc = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
       vArr[j] = pt3;
       sArr[j] = sc;
@@ -3229,7 +4263,7 @@ function renderMultiSectionColumn(
     }
     const nLen = Math.hypot(nx, ny, nz) || 1;
     const useSmooth = Boolean(shape.autoShade && nBuf && normalsDifferFlat(nBuf, nOffA, nOffB, nOffC));
-    const isFlatUp = nz / nLen > 0.96 && !useSmooth;
+    const isFlatUp = !tilt && nz / nLen > 0.96 && !useSmooth;
 
     const flatCol = useSmooth
       ? shape.baseColor
@@ -3439,83 +4473,170 @@ function renderMultiSectionColumn(
     }
   }
 
-  // Top horizontal cap scanline fill (with CW screen-projected polygon)
-  const topPoly = ringsScreen[numRings - 1];
-  const zTopCap = z0 + rings[numRings - 1].t * (z1 - z0);
-  let capMinY = Infinity, capMaxY = -Infinity;
-  for (const [, sy] of topPoly) {
-    if (sy < capMinY) capMinY = sy;
-    if (sy > capMaxY) capMaxY = sy;
-  }
-  const scanStartY = Math.max(bMinY, Math.floor(capMinY));
-  const scanEndY = Math.min(bMaxY, Math.ceil(capMaxY));
-  const crossings: { x: number; dir: number }[] = [];
-  const topShadeFactor = topTexSlot && topTexSlot.mode !== 'none'
-    ? (topTexSlot.shadeWithFace !== false
-        ? computeFaceTextureShadeFactor(0, 0, 1, shape.autoShade, shape.shadeContrast)
-        : 1)
-    : 1;
-  for (let py = scanStartY; py <= scanEndY; py++) {
-    const scy = py + 0.5;
-    crossings.length = 0;
-    for (let j = 0; j < vertCount; j++) {
-      const [ax, ay] = topPoly[j];
-      const [bx, by] = topPoly[(j + 1) % vertCount];
-      if (ay <= scy && by > scy) {
-        crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: 1 });
-      } else if (by <= scy && ay > scy) {
-        crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: -1 });
+  // Planar cap scanline fill helper (handles top cap and, when tilted, bottom cap too)
+  const rasterColCap = (
+    capPoly: [number, number][],
+    zLocalPlane: number,
+    nLocalZ: 1 | -1,
+    capTexSlot: FaceTextureSlot | undefined,
+    capFaceSpec: PlanarFaceSpec | undefined,
+  ) => {
+    let capCol = triad.top;
+    let capSunBit: 0 | 1 | 2 = 2;
+    let capShadeFactor = capTexSlot && capTexSlot.mode !== 'none'
+      ? (capTexSlot.shadeWithFace !== false
+          ? computeFaceTextureShadeFactor(0, 0, nLocalZ, shape.autoShade, shape.shadeContrast)
+          : 1)
+      : 1;
+    let p0z = zLocalPlane, dz1 = 0, dz2 = 0;
+    let s0x = 0, s0y = 0, dux = 1, duy = 0, dvx = 0, dvy = 1, invDet = 0;
+    let useTiltedPlane = false;
+
+    if (tilt) {
+      const [nxV, nyV, nzV] = tiltNormalToView(0, 0, nLocalZ, tilt);
+      if (nxV * 18 + nyV * 18 + nzV * 16 <= 1e-3) return;
+      const P0 = transformLocalPointWithTilt(0, 0, zLocalPlane, tilt);
+      const P1 = transformLocalPointWithTilt(1, 0, zLocalPlane, tilt);
+      const P2 = transformLocalPointWithTilt(0, 1, zLocalPlane, tilt);
+      const S0 = isoToScreenPx(P0.x, P0.y, P0.z, originX, originY);
+      const S1 = isoToScreenPx(P1.x, P1.y, P1.z, originX, originY);
+      const S2 = isoToScreenPx(P2.x, P2.y, P2.z, originX, originY);
+      s0x = S0[0]; s0y = S0[1];
+      dux = S1[0] - s0x; duy = S1[1] - s0y;
+      dvx = S2[0] - s0x; dvy = S2[1] - s0y;
+      const det = dux * dvy - duy * dvx;
+      if (Math.abs(det) < 1e-5) return;
+      invDet = 1 / det;
+      p0z = P0.z;
+      dz1 = P1.z - P0.z;
+      dz2 = P2.z - P0.z;
+      useTiltedPlane = true;
+
+      const isTopFlat = Math.abs(nxV) < 1e-4 && Math.abs(nyV) < 1e-4 && nzV > 0;
+      const isLeftPure = Math.abs(nxV) < 1e-4 && nyV > 0 && Math.abs(nzV) < 1e-4;
+      const isRightPure = nxV > 0 && Math.abs(nyV) < 1e-4 && Math.abs(nzV) < 1e-4;
+      if (isTopFlat) capCol = triad.top;
+      else if (isLeftPure) capCol = triad.left;
+      else if (isRightPure) capCol = triad.right;
+      else {
+        capCol = shadeByNormal(
+          shape.baseColor,
+          nxV,
+          nyV,
+          nzV,
+          shape.autoShade,
+          shape.shadeContrast,
+          nLocalZ > 0 ? shape.roofColor : null,
+        );
       }
+      capSunBit = classifySunFacingMetricNormal(nxV, nyV, nzV);
+      capShadeFactor = capTexSlot && capTexSlot.mode !== 'none'
+        ? (capTexSlot.shadeWithFace !== false
+            ? computeFaceTextureShadeFactor(nxV, nyV, nzV, shape.autoShade, shape.shadeContrast)
+            : 1)
+        : 1;
     }
-    if (crossings.length < 2) continue;
-    crossings.sort((p, q) => p.x - q.x);
-    const ly = py - bMinY;
-    let winding = 0;
-    for (let k = 0; k < crossings.length - 1; k++) {
-      winding += crossings[k].dir;
-      if (winding === 0) continue;
-      const xStart = Math.max(bMinX, Math.ceil(crossings[k].x - 0.5));
-      const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
-      for (let px = xStart; px <= xEnd; px++) {
-        const idx = ly * bw + (px - bMinX);
-        if (zTopCap < zDepth[idx] - 1e-3) continue;
-        let col = triad.top;
-        let loc: { luFrac: number; lvFrac: number; lsu: number; lsv: number } | null = null;
-        if (useTopPattern || (topTexSlot && topTexSlot.mode !== 'none' && topFaceSpec)) {
-          const dx = px + 0.5 - originX;
-          const dy = scy + zTopCap - originY;
-          const pu = dx / 32 + dy / 16;
-          const pv = dy / 16 - dx / 32;
-          const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
-          const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
-          loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
-          if (useTopPattern) {
-            col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, triad.top, shape.pattern);
+
+    let capMinY = Infinity, capMaxY = -Infinity;
+    for (const [, sy] of capPoly) {
+      if (sy < capMinY) capMinY = sy;
+      if (sy > capMaxY) capMaxY = sy;
+    }
+    const scanStartY = Math.max(bMinY, Math.floor(capMinY));
+    const scanEndY = Math.min(bMaxY, Math.ceil(capMaxY));
+    const crossings: { x: number; dir: number }[] = [];
+    for (let py = scanStartY; py <= scanEndY; py++) {
+      const scy = py + 0.5;
+      crossings.length = 0;
+      for (let j = 0; j < vertCount; j++) {
+        const [ax, ay] = capPoly[j];
+        const [bx, by] = capPoly[(j + 1) % vertCount];
+        if (ay <= scy && by > scy) {
+          crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: 1 });
+        } else if (by <= scy && ay > scy) {
+          crossings.push({ x: ax + ((scy - ay) / (by - ay)) * (bx - ax), dir: -1 });
+        }
+      }
+      if (crossings.length < 2) continue;
+      crossings.sort((p, q) => p.x - q.x);
+      const ly = py - bMinY;
+      let winding = 0;
+      for (let k = 0; k < crossings.length - 1; k++) {
+        winding += crossings[k].dir;
+        if (winding === 0) continue;
+        const xStart = Math.max(bMinX, Math.ceil(crossings[k].x - 0.5));
+        const xEnd = Math.min(bMaxX, Math.floor(crossings[k + 1].x - 0.5));
+        for (let px = xStart; px <= xEnd; px++) {
+          const idx = ly * bw + (px - bMinX);
+          let zCap = zLocalPlane;
+          let locLu = 0, locLv = 0;
+          if (useTiltedPlane) {
+            const rx = px + 0.5 - s0x;
+            const ry = scy - s0y;
+            locLu = (rx * dvy - ry * dvx) * invDet;
+            locLv = (dux * ry - duy * rx) * invDet;
+            zCap = p0z + locLu * dz1 + locLv * dz2;
           }
+          if (zCap < zDepth[idx] - 1e-3) continue;
+
+          let col = capCol;
+          let loc: { luFrac: number; lvFrac: number; lsu: number; lsv: number } | null = null;
+          if (useTopPattern || (capTexSlot && capTexSlot.mode !== 'none' && capFaceSpec)) {
+            if (useTiltedPlane) {
+              loc = { luFrac: clamp(locLu, 0, 1), lvFrac: clamp(locLv, 0, 1), lsu: localSu, lsv: localSv };
+            } else {
+              const dx = px + 0.5 - originX;
+              const dy = scy + zCap - originY;
+              const pu = dx / 32 + dy / 16;
+              const pv = dy / 16 - dx / 32;
+              const uFrac = clamp((pu - u0) / Math.max(1e-4, su), 0, 1);
+              const vFrac = clamp((pv - v0) / Math.max(1e-4, sv), 0, 1);
+              loc = viewFracToLocal(uFrac, vFrac, viewOri, su, sv);
+            }
+            if (useTopPattern) {
+              col = sampleTopGridColor(loc.luFrac, loc.lvFrac, loc.lsu, loc.lsv, capCol, shape.pattern);
+            }
+          }
+          if (loc && capTexSlot && capTexSlot.mode !== 'none' && capFaceSpec) {
+            const texCol = sampleFaceTextureRGBA(capTexSlot, loc.luFrac, loc.lvFrac, capFaceSpec.faceW, capFaceSpec.faceH);
+            if (texCol) col = compositeFaceTexelOverBase(col, texCol, capShadeFactor);
+          }
+          const di = idx * 4;
+          tmpBuf[di] = col.r;
+          tmpBuf[di + 1] = col.g;
+          tmpBuf[di + 2] = col.b;
+          tmpBuf[di + 3] = 255;
+          zDepth[idx] = zCap;
+          faceTag[idx] = 2;
+          edgeTag[idx] = 0;
+          if (tmpSun) tmpSun[idx] = capSunBit;
         }
-        if (loc && topTexSlot && topTexSlot.mode !== 'none' && topFaceSpec) {
-          const texCol = sampleFaceTextureRGBA(topTexSlot, loc.luFrac, loc.lvFrac, topFaceSpec.faceW, topFaceSpec.faceH);
-          if (texCol) col = compositeFaceTexelOverBase(col, texCol, topShadeFactor);
-        }
-        const di = idx * 4;
-        tmpBuf[di] = col.r;
-        tmpBuf[di + 1] = col.g;
-        tmpBuf[di + 2] = col.b;
-        tmpBuf[di + 3] = 255;
-        zDepth[idx] = zTopCap;
-        faceTag[idx] = 2;
-        edgeTag[idx] = 0;
-        if (tmpSun) tmpSun[idx] = 2;
       }
     }
+  };
+
+  const zTopCap = z0 + rings[numRings - 1].t * (z1 - z0);
+  rasterColCap(ringsScreen[numRings - 1], zTopCap, 1, topTexSlot, topFaceSpec);
+  if (tilt) {
+    const zBotCap = z0 + rings[0].t * (z1 - z0);
+    const botTexSlot = faceSpecMap ? shape.faceTextures?.bottom : undefined;
+    const botFaceSpec = faceSpecMap?.get('bottom');
+    rasterColCap(ringsScreen[0], zBotCap, -1, botTexSlot, botFaceSpec);
   }
 
   // Front top-rim highlight
   if (shape.edgeHighlight) {
-    for (let ly = 0; ly < bh - 1; ly++) {
+    for (let ly = 0; ly < bh; ly++) {
       for (let lx = 0; lx < bw; lx++) {
         const idx = ly * bw + lx;
-        if (faceTag[idx] === 2 && faceTag[idx + bw] === 1) {
+        if (faceTag[idx] !== 2) continue;
+        const nearWall = tilt
+          ? (ly + 1 < bh && faceTag[idx + bw] === 1) ||
+            (ly > 0 && faceTag[idx - bw] === 1) ||
+            (lx + 1 < bw && faceTag[idx + 1] === 1) ||
+            (lx > 0 && faceTag[idx - 1] === 1)
+          : ly + 1 < bh && faceTag[idx + bw] === 1;
+        if (nearWall) {
           const di = idx * 4;
           tmpBuf[di] = triad.highlight.r;
           tmpBuf[di + 1] = triad.highlight.g;
@@ -3678,6 +4799,9 @@ function renderShapeToBufferInner(
 
   const triad = buildShadingTriad(shape);
   const flipZ = Boolean(shape.flipZ);
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(u0, v0, su, sv, z0, z1, vb.ori, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
 
   switch (shape.shapeType) {
     case 'box': {
@@ -3685,7 +4809,8 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildBoxFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ);
+      const rawFaces = buildBoxFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ, Boolean(tilt));
+      const faces = tilt ? tiltMeshFaces(rawFaces, tilt) : rawFaces;
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3694,7 +4819,8 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ);
+      const rawFaces = buildRightTriPrismFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ, Boolean(tilt));
+      const faces = tilt ? tiltMeshFaces(rawFaces, tilt) : rawFaces;
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3707,17 +4833,20 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      const faces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, vb.ori, flipZ);
+      const rawFaces = buildPrismFaces(u0, v0, su, sv, z0, z1, shape.prismSides, vb.ori, flipZ, Boolean(tilt));
+      const faces = tilt ? tiltMeshFaces(rawFaces, tilt) : rawFaces;
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
     case 'wedge': {
-      const faces = buildWedgeFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.wedgeMode, flipZ);
+      const rawFaces = buildWedgeFaces(u0, v0, su, sv, z0, z1, vb.ori, shape.wedgeMode, flipZ, Boolean(tilt));
+      const faces = tilt ? tiltMeshFaces(rawFaces, tilt) : rawFaces;
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
     case 'pyramid': {
-      const faces = buildPyramidFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ);
+      const rawFaces = buildPyramidFaces(u0, v0, su, sv, z0, z1, vb.ori, flipZ, Boolean(tilt));
+      const faces = tilt ? tiltMeshFaces(rawFaces, tilt) : rawFaces;
       renderConvexMesh(dst, w, h, faces, shape, triad, originX, originY, u0, v0, su, sv, vb.ori);
       break;
     }
@@ -3726,7 +4855,11 @@ function renderShapeToBufferInner(
         renderMultiSectionColumn(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
         break;
       }
-      renderCylinder(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      if (tilt) {
+        renderTiltedAnalyticalPrimitive(dst, w, h, 'cylinder', tilt, shape, triad, originX, originY);
+      } else {
+        renderCylinder(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      }
       break;
     }
     case 'loft': {
@@ -3734,15 +4867,269 @@ function renderShapeToBufferInner(
       break;
     }
     case 'cone': {
-      renderCone(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      if (tilt) {
+        renderTiltedAnalyticalPrimitive(dst, w, h, 'cone', tilt, shape, triad, originX, originY);
+      } else {
+        renderCone(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      }
       break;
     }
     case 'dome':
     case 'sphere': {
-      renderDomeOrSphere(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      if (tilt) {
+        const isSphere = shape.shapeType === 'sphere' || shape.domeMode === 'sphere';
+        renderTiltedAnalyticalPrimitive(dst, w, h, isSphere ? 'sphere' : 'dome', tilt, shape, triad, originX, originY);
+      } else {
+        renderDomeOrSphere(dst, w, h, u0, v0, su, sv, z0, z1, shape, triad, originX, originY, vb.ori);
+      }
       break;
     }
   }
+}
+
+export interface TiltedViewBounds3D {
+  minU: number;
+  maxU: number;
+  minV: number;
+  maxV: number;
+  minZ: number;
+  maxZ: number;
+  /** Tight 3D vertices representing the shape's rotated envelope (for ground projection hull & depth sorting) */
+  points3D: Vec3[];
+}
+
+export function getShapeTiltedViewBounds(
+  shape: ParametricShape,
+  plotU: number,
+  plotV: number,
+  rot: ViewRotation,
+): TiltedViewBounds3D {
+  const vb = worldBoxToView(
+    shape.u,
+    shape.v,
+    shape.shapeType === 'theotown_base' ? Math.max(1, Math.round(shape.sizeU)) : Math.max(0.0625, shape.sizeU),
+    shape.shapeType === 'theotown_base' ? Math.max(1, Math.round(shape.sizeV)) : Math.max(0.0625, shape.sizeV),
+    normalizeRotation(shape.ori),
+    plotU,
+    plotV,
+    rot,
+  );
+  const su = vb.sizeU;
+  const sv = vb.sizeV;
+  const z0 = Math.round(shape.zPx);
+  const z1 = z0 + Math.max(0, Math.round(shape.heightPx));
+
+  let lu0 = 0, lu1 = 1, lv0 = 0, lv1 = 1;
+  if (shape.shapeType === 'loft') {
+    const lb = getLoftLocalBounds(shape.loftSections, shape.loftInterp ?? 'smooth');
+    lu0 = Math.min(0, lb.minU);
+    lu1 = Math.max(1, lb.maxU);
+    lv0 = Math.min(0, lb.minV);
+    lv1 = Math.max(1, lb.maxV);
+  } else if (hasActiveColumnSections(shape)) {
+    const lb = getColumnLocalBounds(shape);
+    lu0 = Math.min(0, lb.minU);
+    lu1 = Math.max(1, lb.maxU);
+    lv0 = Math.min(0, lb.minV);
+    lv1 = Math.max(1, lb.maxV);
+  }
+
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(vb.u, vb.v, su, sv, z0, z1, vb.ori, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+
+  const toPt = (lu: number, lv: number, z: number): Vec3 =>
+    tilt
+      ? transformLocalPointWithTilt(lu, lv, z, tilt)
+      : transformLocalToViewPoint(lu, lv, z, vb.u, vb.v, su, sv, vb.ori);
+
+  const points3D: Vec3[] = [];
+  const flipZ = Boolean(shape.flipZ);
+
+  if (!tilt || shape.shapeType === 'theotown_base') {
+    for (const zc of [z0, z1]) {
+      points3D.push(toPt(lu0, lv0, zc), toPt(lu1, lv0, zc), toPt(lu1, lv1, zc), toPt(lu0, lv1, zc));
+    }
+  } else if (shape.shapeType === 'box' && !hasActiveColumnSections(shape)) {
+    for (const zc of [z0, z1]) {
+      points3D.push(toPt(0, 0, zc), toPt(1, 0, zc), toPt(1, 1, zc), toPt(0, 1, zc));
+    }
+  } else if (shape.shapeType === 'right_tri_prism' && !hasActiveColumnSections(shape)) {
+    const faces = tiltMeshFaces(
+      buildRightTriPrismFaces(vb.u, vb.v, su, sv, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ, true),
+      tilt,
+    );
+    for (const f of faces) for (const pt of f.verts) points3D.push(pt);
+  } else if (shape.shapeType === 'prism' && !hasActiveColumnSections(shape)) {
+    const faces = tiltMeshFaces(buildPrismFaces(vb.u, vb.v, su, sv, z0, z1, shape.prismSides, vb.ori, flipZ, true), tilt);
+    for (const f of faces) for (const pt of f.verts) points3D.push(pt);
+  } else if (shape.shapeType === 'wedge') {
+    const faces = tiltMeshFaces(buildWedgeFaces(vb.u, vb.v, su, sv, z0, z1, vb.ori, shape.wedgeMode, flipZ, true), tilt);
+    for (const f of faces) for (const pt of f.verts) points3D.push(pt);
+  } else if (shape.shapeType === 'pyramid') {
+    const faces = tiltMeshFaces(buildPyramidFaces(vb.u, vb.v, su, sv, z0, z1, vb.ori, flipZ, true), tilt);
+    for (const f of faces) for (const pt of f.verts) points3D.push(pt);
+  } else if (shape.shapeType === 'cylinder' && !hasActiveColumnSections(shape)) {
+    for (let i = 0; i < 24; i++) {
+      const a = (i * Math.PI * 2) / 24;
+      const lu = 0.5 + Math.cos(a) * 0.5;
+      const lv = 0.5 + Math.sin(a) * 0.5;
+      points3D.push(toPt(lu, lv, z0), toPt(lu, lv, z1));
+    }
+  } else if (shape.shapeType === 'cone') {
+    const zBase = flipZ ? z1 : z0;
+    const zApex = flipZ ? z0 : z1;
+    for (let i = 0; i < 24; i++) {
+      const a = (i * Math.PI * 2) / 24;
+      points3D.push(toPt(0.5 + Math.cos(a) * 0.5, 0.5 + Math.sin(a) * 0.5, zBase));
+    }
+    points3D.push(toPt(0.5, 0.5, zApex));
+  } else if (shape.shapeType === 'sphere' || (shape.shapeType === 'dome' && shape.domeMode === 'sphere')) {
+    const totalH = Math.max(1, z1 - z0);
+    const zMid = z0 + totalH * 0.5;
+    const rz = totalH * 0.5;
+    for (let j = 0; j <= 8; j++) {
+      const phi = -Math.PI * 0.5 + (j / 8) * Math.PI;
+      const cPhi = Math.cos(phi);
+      const zc = zMid + Math.sin(phi) * rz;
+      const nAz = j === 0 || j === 8 ? 1 : 16;
+      for (let i = 0; i < nAz; i++) {
+        const a = (i * Math.PI * 2) / nAz;
+        points3D.push(toPt(0.5 + Math.cos(a) * 0.5 * cPhi, 0.5 + Math.sin(a) * 0.5 * cPhi, zc));
+      }
+    }
+  } else if (shape.shapeType === 'dome') {
+    const totalH = Math.max(1, z1 - z0);
+    const zPlane = flipZ ? z1 : z0;
+    const signZ = flipZ ? -1 : 1;
+    for (let j = 0; j <= 6; j++) {
+      const phi = (j / 6) * Math.PI * 0.5;
+      const cPhi = Math.cos(phi);
+      const zc = zPlane + signZ * Math.sin(phi) * totalH;
+      const nAz = j === 6 ? 1 : 16;
+      for (let i = 0; i < nAz; i++) {
+        const a = (i * Math.PI * 2) / nAz;
+        points3D.push(toPt(0.5 + Math.cos(a) * 0.5 * cPhi, 0.5 + Math.sin(a) * 0.5 * cPhi, zc));
+      }
+    }
+  } else if (shape.shapeType === 'arch') {
+    const spanCells = vb.ori % 2 === 1 ? sv : su;
+    const cs = buildArchCrossSection({
+      outerNodes: shape.archNodes,
+      hollow: shape.archHollow ?? false,
+      hollowStyle: shape.archHollowStyle ?? 'shell',
+      innerMode: shape.archInnerMode ?? 'parallel',
+      thickness: shape.archThickness ?? 0.28,
+      innerNodes: shape.archInnerNodes,
+      spanMetric: Math.max(4, spanCells * 18),
+      heightMetric: Math.max(4, z1 - z0),
+      sampleCount: 18,
+    });
+    for (const [s, hFrac] of cs.poly) {
+      const zc = z0 + (flipZ ? 1 - hFrac : hFrac) * (z1 - z0);
+      points3D.push(toPt(s, 0, zc), toPt(s, 1, zc));
+    }
+  } else if (shape.shapeType === 'loft') {
+    const rawLoft = buildAlignedLoftRings(
+      normalizeLoftSections(shape.loftSections),
+      24,
+      16,
+      shape.loftInterp ?? 'smooth',
+      false,
+      tilt.lsu,
+      tilt.lsv,
+      0,
+    );
+    for (const ring of rawLoft.rings) {
+      const zc = z0 + (flipZ ? 1 - ring.t : ring.t) * (z1 - z0);
+      for (const [lu, lv] of ring.pts) points3D.push(toPt(lu, lv, zc));
+    }
+  } else if (hasActiveColumnSections(shape)) {
+    const rawRings = buildColumnRings(shape, 16, 24);
+    for (const ring of rawRings) {
+      const zc = z0 + (flipZ ? 1 - ring.t : ring.t) * (z1 - z0);
+      for (const [lu, lv] of ring.pts) points3D.push(toPt(lu, lv, zc));
+    }
+  } else {
+    for (const zc of [z0, z1]) {
+      points3D.push(toPt(lu0, lv0, zc), toPt(lu1, lv0, zc), toPt(lu1, lv1, zc), toPt(lu0, lv1, zc));
+    }
+  }
+
+  let minU = Infinity, maxU = -Infinity;
+  let minV = Infinity, maxV = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  for (const pt of points3D) {
+    if (pt.x < minU) minU = pt.x;
+    if (pt.x > maxU) maxU = pt.x;
+    if (pt.y < minV) minV = pt.y;
+    if (pt.y > maxV) maxV = pt.y;
+    if (pt.z < minZ) minZ = pt.z;
+    if (pt.z > maxZ) maxZ = pt.z;
+  }
+  if (!Number.isFinite(minZ)) {
+    minU = vb.u; maxU = vb.u + su;
+    minV = vb.v; maxV = vb.v + sv;
+    minZ = z0; maxZ = z1;
+  }
+  // Exact analytical Z bounds for tilted analytical primitives so grounding & stacking are sub-pixel exact
+  if (tilt && (shape.shapeType === 'sphere' || (shape.shapeType === 'dome' && shape.domeMode === 'sphere'))) {
+    const rx = Math.max(0.5, tilt.lsu * METRIC_PX_PER_CELL * 0.5);
+    const ry = Math.max(0.5, tilt.lsv * METRIC_PX_PER_CELL * 0.5);
+    const rz = Math.max(0.5, (z1 - z0) * 0.5);
+    const zMidLoc = (z0 + z1) * 0.5 - tilt.czView;
+    const zCent = tilt.czOut + tilt.m22 * zMidLoc;
+    const zHalf = Math.hypot(tilt.m20 * rx, tilt.m21 * ry, tilt.m22 * rz);
+    minZ = zCent - zHalf;
+    maxZ = zCent + zHalf;
+  } else if (tilt && shape.shapeType === 'cylinder' && !hasActiveColumnSections(shape)) {
+    const rx = Math.max(0.5, tilt.lsu * METRIC_PX_PER_CELL * 0.5);
+    const ry = Math.max(0.5, tilt.lsv * METRIC_PX_PER_CELL * 0.5);
+    const zBotV = tilt.czOut + tilt.m22 * (z0 - tilt.czView);
+    const zTopV = tilt.czOut + tilt.m22 * (z1 - tilt.czView);
+    const capHalf = Math.hypot(tilt.m20 * rx, tilt.m21 * ry);
+    minZ = Math.min(zBotV, zTopV) - capHalf;
+    maxZ = Math.max(zBotV, zTopV) + capHalf;
+  } else if (tilt && shape.shapeType === 'cone') {
+    const rx = Math.max(0.5, tilt.lsu * METRIC_PX_PER_CELL * 0.5);
+    const ry = Math.max(0.5, tilt.lsv * METRIC_PX_PER_CELL * 0.5);
+    const zBaseV = tilt.czOut + tilt.m22 * ((flipZ ? z1 : z0) - tilt.czView);
+    const zApexV = tilt.czOut + tilt.m22 * ((flipZ ? z0 : z1) - tilt.czView);
+    const capHalf = Math.hypot(tilt.m20 * rx, tilt.m21 * ry);
+    minZ = Math.min(zBaseV - capHalf, zApexV);
+    maxZ = Math.max(zBaseV + capHalf, zApexV);
+  } else if (tilt && shape.shapeType === 'dome') {
+    const rx = Math.max(0.5, tilt.lsu * METRIC_PX_PER_CELL * 0.5);
+    const ry = Math.max(0.5, tilt.lsv * METRIC_PX_PER_CELL * 0.5);
+    const rz = Math.max(0.5, z1 - z0);
+    const zPlaneLoc = (flipZ ? z1 : z0) - tilt.czView;
+    const signZ = flipZ ? -1 : 1;
+    const zPlaneV = tilt.czOut + tilt.m22 * zPlaneLoc;
+    const a = tilt.m20 * rx;
+    const b = tilt.m21 * ry;
+    const c = tilt.m22 * signZ * rz;
+    minZ = zPlaneV - (c < 0 ? Math.hypot(a, b, c) : Math.hypot(a, b));
+    maxZ = zPlaneV + (c > 0 ? Math.hypot(a, b, c) : Math.hypot(a, b));
+  }
+  return { minU, maxU, minV, maxV, minZ, maxZ, points3D };
+}
+
+export function getShapeTiltedZRange(shape: ParametricShape): { minZ: number; maxZ: number } {
+  const b = getShapeTiltedViewBounds(shape, 4, 4, 0);
+  return { minZ: b.minZ, maxZ: b.maxZ };
+}
+
+/**
+ * Computes the shape.zPx required so that the shape's actual rendered lowest point (`minZ`)
+ * sits cleanly at (or within <1px above, never below) `targetMinZ`.
+ */
+export function computeZPxForTargetMinZ(shape: ParametricShape, targetMinZ: number): number {
+  if (!hasActiveTilt(shape)) {
+    return clamp(Math.round(targetMinZ), 0, 1024);
+  }
+  const { minZ } = getShapeTiltedZRange(shape);
+  const nextZ = Math.ceil(shape.zPx + (targetMinZ - minZ) - 1e-4);
+  return clamp(nextZ, -512, 1024);
 }
 
 export function getShapeScreenBounds(
@@ -3758,28 +5145,40 @@ export function getShapeScreenBounds(
   const sv = shape.shapeType === 'theotown_base' ? Math.max(1, Math.round(vb.sizeV)) : Math.max(0.0625, vb.sizeV);
   const z0 = Math.round(shape.zPx);
   const z1 = z0 + Math.max(0, Math.round(shape.heightPx));
-  const corners = [
-    isoToScreenPx(vb.u, vb.v, z0, originX, originY),
-    isoToScreenPx(vb.u + su, vb.v, z0, originX, originY),
-    isoToScreenPx(vb.u + su, vb.v + sv, z0, originX, originY),
-    isoToScreenPx(vb.u, vb.v + sv, z0, originX, originY),
-    isoToScreenPx(vb.u, vb.v, z1, originX, originY),
-    isoToScreenPx(vb.u + su, vb.v, z1, originX, originY),
-    isoToScreenPx(vb.u + su, vb.v + sv, z1, originX, originY),
-    isoToScreenPx(vb.u, vb.v + sv, z1, originX, originY),
-  ];
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(vb.u, vb.v, su, sv, z0, z1, vb.ori, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [x, y] of corners) {
-    if (x < minX) minX = x;
-    if (y < minY) minY = y;
-    if (x > maxX) maxX = x;
-    if (y > maxY) maxY = y;
+  const expand = (sx: number, sy: number) => {
+    if (sx < minX) minX = sx;
+    if (sy < minY) minY = sy;
+    if (sx > maxX) maxX = sx;
+    if (sy > maxY) maxY = sy;
+  };
+  const toPt = (lu: number, lv: number, z: number): Vec3 =>
+    tilt
+      ? transformLocalPointWithTilt(lu, lv, z, tilt)
+      : transformLocalToViewPoint(lu, lv, z, vb.u, vb.v, su, sv, vb.ori);
+
+  for (const zc of [z0, z1]) {
+    for (const [lu, lv] of [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ]) {
+      const pt = toPt(lu, lv, zc);
+      const [sx, sy] = isoToScreenPx(pt.x, pt.y, pt.z, originX, originY);
+      expand(sx, sy);
+    }
   }
   if (
-    shape.shapeType === 'cylinder' ||
-    shape.shapeType === 'cone' ||
-    shape.shapeType === 'dome' ||
-    shape.shapeType === 'sphere'
+    !tilt &&
+    (shape.shapeType === 'cylinder' ||
+      shape.shapeType === 'cone' ||
+      shape.shapeType === 'dome' ||
+      shape.shapeType === 'sphere')
   ) {
     const ru = su * 0.5;
     const rv = sv * 0.5;
@@ -3805,12 +5204,9 @@ export function getShapeScreenBounds(
         [lu1, lv1],
         [lu0, lv1],
       ]) {
-        const pt3 = transformLocalToViewPoint(lu, lv, zc, vb.u, vb.v, su, sv, vb.ori);
+        const pt3 = toPt(lu, lv, zc);
         const [sx, sy] = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
-        if (sx < minX) minX = sx;
-        if (sy < minY) minY = sy;
-        if (sx > maxX) maxX = sx;
-        if (sy > maxY) maxY = sy;
+        expand(sx, sy);
       }
     }
   } else if (hasActiveColumnSections(shape)) {
@@ -3826,14 +5222,17 @@ export function getShapeScreenBounds(
         [lu1, lv1],
         [lu0, lv1],
       ]) {
-        const pt3 = transformLocalToViewPoint(lu, lv, zc, vb.u, vb.v, su, sv, vb.ori);
+        const pt3 = toPt(lu, lv, zc);
         const [sx, sy] = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
-        if (sx < minX) minX = sx;
-        if (sy < minY) minY = sy;
-        if (sx > maxX) maxX = sx;
-        if (sy > maxY) maxY = sy;
+        expand(sx, sy);
       }
     }
+  }
+  if (tilt) {
+    minX -= 2;
+    minY -= 2;
+    maxX += 2;
+    maxY += 2;
   }
   return { minX, minY, maxX, maxY };
 }
@@ -3869,24 +5268,29 @@ export function getPlanarFaceScreenOverlay(
   const z0 = Math.round(shape.zPx);
   const z1 = z0 + Math.max(0, Math.round(shape.heightPx));
   const flipZ = Boolean(shape.flipZ);
+  const tilt = hasActiveTilt(shape)
+    ? buildTiltTransform(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.tiltUDeg, shape.tiltVDeg, shape.tiltPivot, shape)
+    : null;
+  const includeBottom = Boolean(tilt);
   let faces: MeshFace[] = [];
   switch (shape.shapeType) {
     case 'box':
-      faces = buildBoxFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ);
+      faces = buildBoxFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ, includeBottom);
       break;
     case 'right_tri_prism':
-      faces = buildRightTriPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ);
+      faces = buildRightTriPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.triPrismCut ?? 'vertical', flipZ, includeBottom);
       break;
     case 'prism':
-      faces = buildPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, shape.prismSides, vb.ori, flipZ);
+      faces = buildPrismFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, shape.prismSides, vb.ori, flipZ, includeBottom);
       break;
     case 'wedge':
-      faces = buildWedgeFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.wedgeMode, flipZ);
+      faces = buildWedgeFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, shape.wedgeMode, flipZ, includeBottom);
       break;
     case 'pyramid':
-      faces = buildPyramidFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ);
+      faces = buildPyramidFaces(vb.u, vb.v, vb.sizeU, vb.sizeV, z0, z1, vb.ori, flipZ, includeBottom);
       break;
   }
+  if (tilt) faces = tiltMeshFaces(faces, tilt);
   const match = faces.find((f) => f.faceId === faceId);
   if (!match) return null;
   const screenVerts = match.verts.map((pt) => isoToScreenPx(pt.x, pt.y, pt.z, originX, originY));

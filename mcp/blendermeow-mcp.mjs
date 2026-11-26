@@ -266,7 +266,7 @@ const TOOLS = [
   {
     name: 'studio_upsert_shape',
     description:
-      '[#M5] Create or update a 3D parametric shape layer (mode: auto|create|update). Shapes: box, right_tri_prism, arch, cylinder, loft, prism, wedge, pyramid, cone, dome, sphere, theotown_base. Supports cells/zPx or meters (1 cell=9.6m, 3px=1.6m), flipZ (vertical flip), stackOnBelow, archPreset/loftPreset, shading/outline, and pattern.',
+      '[#M5] Create or update a 3D parametric shape layer (mode: auto|create|update). Shapes: box, right_tri_prism, arch, cylinder, loft, prism, wedge, pyramid, cone, dome, sphere, theotown_base. Supports cells/zPx or meters (1 cell=9.6m, 3px=1.6m), flipZ (vertical flip), tiltUDeg/tiltVDeg/tiltPivot (vertical-plane tilt & lay flat -180..+180 deg), stackOnBelow, archPreset/loftPreset, shading/outline, and pattern.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -293,6 +293,9 @@ const TOOLS = [
         stackOnBelow: { type: 'boolean' },
         ori: { type: 'number' },
         flipZ: { type: 'boolean', description: 'Vertically flip shape upside-down within its [zPx, zPx + heightPx] span.' },
+        tiltUDeg: { type: 'number', description: 'Vertical-plane tilt angle in local U-Z plane (-180..+180 deg; +90 lays shape flat along +U).' },
+        tiltVDeg: { type: 'number', description: 'Vertical-plane tilt angle in local V-Z plane (-180..+180 deg; +90 lays shape flat along +V).' },
+        tiltPivot: { type: 'string', enum: ['center', 'bottom'], description: 'Pivot point for vertical-plane tilt rotation (center or bottom).' },
         prismSides: { type: 'number' },
         triPrismCut: { type: 'string' },
         wedgeMode: { type: 'string' },

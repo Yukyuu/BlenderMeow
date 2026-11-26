@@ -14,7 +14,8 @@ import {
   tr,
 } from './core/i18n';
 import { viewBoxToWorld, worldBoxToView, type GridSnapStep } from './core/isoMath';
-import { SHAPE_LABELS, type ShapeKind } from './core/isoRenderer';
+import { computeZPxForTargetMinZ, getShapeTiltedZRange, hasActiveTilt, SHAPE_LABELS, type ShapeKind } from './core/isoRenderer';
+import { sanitizeFaceTexturesForShape } from './core/textures';
 import { isEditableElement } from './shortcuts/keyCodec';
 import { formatActionHint, openShortcutsDialog, shortcutManager } from './shortcuts/blenderShortcuts';
 import { resolveAssetUrl } from './core/theotownAssets';
@@ -31,6 +32,7 @@ import {
   openExportDialog,
   openPlotFrameDialog,
   openProjectHome,
+  openResizeCanvasDialog,
   openSendToPixelMeowDialog,
   openSettingsDialog,
 } from './ui/dialogs';
@@ -302,6 +304,18 @@ function openBrandMenu() {
           type: 'button',
           class: 'brand-menu-btn full',
           onclick: () => {
+            close();
+            openResizeCanvasDialog(app, () => view.fit());
+          },
+        },
+        '📐 修改当前项目画布尺寸',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'brand-menu-btn full',
+          onclick: () => {
             window.open(PIXEL_MEOW_ONLINE_URL, '_blank', 'noopener,noreferrer');
           },
         },
@@ -320,13 +334,30 @@ function openBrandMenu() {
 }
 
 const docTitleEl = h('span', { class: 'doc-title', 'data-no-i18n': '1' }, app.docName);
-const plotPillEl = h('span', { class: 'canvas-size-pill' });
+const plotPillEl = h('button', {
+  type: 'button',
+  class: 'canvas-size-pill',
+  title: '点击修改当前项目画布尺寸与场地格数',
+  onclick: (e: MouseEvent) => {
+    e.stopPropagation();
+    openResizeCanvasDialog(app, () => view.fit());
+  },
+});
 const brandBtn = h(
-  'button',
+  'div',
   {
     class: 'brand-btn',
+    role: 'button',
+    tabIndex: 0,
     title: 'Blender Meow 菜单、语言与关于',
     onclick: () => openBrandMenu(),
+    onkeydown: (e: KeyboardEvent) => {
+      if (e.target !== brandBtn) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openBrandMenu();
+      }
+    },
   },
   h('img', { src: resolveAssetUrl('./icon.png'), alt: 'Blender Meow', class: 'brand-icon' }),
   h('div', { class: 'title-box' }, h('div', { class: 'title-row' }, docTitleEl, plotPillEl), cursorInfo),
@@ -657,13 +688,14 @@ function refreshToolStrip() {
             const s = active.shape!;
             const wf = app.doc.getShapeWorldFootprint(s);
             const tz = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, active.id);
+            const nextZ = computeZPxForTargetMinZ(s, tz);
             app.pushHistory('叠放到下方顶面');
-            s.zPx = tz;
+            s.zPx = nextZ;
             app.doc.rerenderShapeLayer(active);
             if (app.settings.autoSortOnEdit) app.doc.sortLayersByIsoDepth();
             app.emit('doc');
             app.emit('layers');
-            toast(`已叠放至 Z = ${tz}px`);
+            toast(`已叠放至 Z = ${Math.round(tz)}px`);
           },
         }, '🧱 叠放到下方顶面'),
         h('button', {
@@ -675,12 +707,44 @@ function refreshToolStrip() {
             app.pushHistory(nextFlip ? '上下翻转图形' : '恢复图形正向');
             if (nextFlip) s.flipZ = true;
             else delete s.flipZ;
+            sanitizeFaceTexturesForShape(s);
             app.doc.rerenderShapeLayer(active);
             app.emit('doc');
             app.emit('layers');
             toast(nextFlip ? '↕ 已将当前图形上下翻转' : '↕ 已恢复图形正向');
           },
         }, '↕ 上下翻转'),
+        h('button', {
+          class: `btn small${hasActiveTilt(active.shape) ? ' primary' : ''}`,
+          title: hasActiveTilt(active.shape)
+            ? '清除当前图形的竖直倾斜角度，恢复直立状态'
+            : '将当前选中图形沿 U-Z 平面旋转 90° 水平放平',
+          onclick: () => {
+            const s = active.shape!;
+            const wasTilted = hasActiveTilt(s);
+            const wasOnGround = Math.abs(getShapeTiltedZRange(s).minZ) <= 1.05;
+            app.pushHistory(wasTilted ? '复位倾斜角度' : '沿 U-Z 放平 90°');
+            if (wasTilted) {
+              delete s.tiltUDeg;
+              delete s.tiltVDeg;
+              if (s.zPx < 0 || (app.settings.keepGroundedOnTilt && wasOnGround)) {
+                s.zPx = 0;
+              }
+            } else {
+              s.tiltUDeg = 90;
+              delete s.tiltVDeg;
+              if (app.settings.keepGroundedOnTilt && (wasOnGround || getShapeTiltedZRange(s).minZ < -1e-4)) {
+                s.zPx = computeZPxForTargetMinZ(s, 0);
+              }
+            }
+            sanitizeFaceTexturesForShape(s);
+            app.doc.rerenderShapeLayer(active);
+            if (app.settings.autoSortOnEdit) app.doc.sortLayersByIsoDepth();
+            app.emit('doc');
+            app.emit('layers');
+            toast(wasTilted ? '📐 已清除倾角，恢复直立状态' : '📐 已将当前图形沿 U-Z 平面放平 90°');
+          },
+        }, hasActiveTilt(active.shape) ? '📐 复位倾角' : '📐 放平 90°'),
       );
       const activeId = active.id;
       const makeModalMutateOpts = () => ({
@@ -1113,7 +1177,8 @@ shortcutManager.onTrigger('ui.shortcuts', () => openShortcutsDialog());
     s.v = wb.v;
     if (!isBase && app.settings.autoStackSnap) {
       const wf = d.getShapeWorldFootprint(s);
-      s.zPx = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, layer.id);
+      const tz = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, layer.id);
+      s.zPx = computeZPxForTargetMinZ(s, tz);
     }
     d.rerenderShapeLayer(layer);
     app.emit('doc_live');
@@ -1126,7 +1191,7 @@ shortcutManager.onTrigger('ui.shortcuts', () => openShortcutsDialog());
     }
     const s = layer.shape;
     if (s.shapeType === 'theotown_base') return false;
-    const nextZ = clamp(Math.round(s.zPx + dzSign * (shiftBoost ? 4 : 1)), 0, 1024);
+    const nextZ = clamp(Math.round(s.zPx + dzSign * (shiftBoost ? 4 : 1)), hasActiveTilt(s) ? -512 : 0, 1024);
     if (nextZ === s.zPx) return false;
     if (!shapeNudgePushed) {
       app.pushHistory(`微调 ${layer.name} 高度位置 (Z)`);

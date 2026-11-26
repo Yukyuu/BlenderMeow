@@ -14,7 +14,7 @@ import {
   worldPointToView,
   zPxToMeters,
 } from './core/isoMath';
-import { transformLocalToViewPoint } from './core/isoRenderer';
+import { getShapeTiltedViewBounds, hasActiveTilt, transformLocalToViewPoint } from './core/isoRenderer';
 import { normalizeLoftSections, sampleClosedSectionUniform } from './core/loft';
 import { drawBadge, type Pt, type Tool, type ToolHost } from './core/tools';
 
@@ -295,7 +295,9 @@ export class View {
     const l = d.layer;
     if (!l || !l.visible || l.kind !== 'shape' || !l.shape) return;
     const s = l.shape;
-    if (s.shapeType === 'theotown_base' || s.zPx <= 0) return;
+    if (s.shapeType === 'theotown_base') return;
+    const isTilted = hasActiveTilt(s);
+    if (!isTilted && s.zPx <= 0) return;
 
     const { originX, originY } = d.getViewOrigin();
     const vb = worldBoxToView(
@@ -323,9 +325,48 @@ export class View {
 
     const primaryPoly: [number, number][] = [];
     let secondaryPoly: [number, number][] | null = null;
-    const dropAnchors: [number, number][] = [];
+    const dropAnchors: [number, number, number][] = []; // [vu, vv, topZ]
+    let centerU = u0 + su * 0.5;
+    let centerV = v0 + sv * 0.5;
+    let centerTopZ = z0;
+    let displayElevZ = z0;
 
-    if (s.shapeType === 'loft') {
+    if (isTilted) {
+      const tb = getShapeTiltedViewBounds(s, d.plotU, d.plotV, d.viewRotation);
+      if (tb.maxZ <= 0 || tb.points3D.length < 3) return;
+      // 2D convex hull (Andrew's monotone chain) in (u, v) view plane
+      const sorted = [...tb.points3D].sort((a, b) => (a.x !== b.x ? a.x - b.x : a.y - b.y));
+      const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+      const lower: typeof sorted = [];
+      for (const p of sorted) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 1e-7) {
+          lower.pop();
+        }
+        lower.push(p);
+      }
+      const upper: typeof sorted = [];
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        const p = sorted[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 1e-7) {
+          upper.pop();
+        }
+        upper.push(p);
+      }
+      lower.pop();
+      upper.pop();
+      const hull = [...lower, ...upper];
+      if (hull.length < 3) return;
+      for (const pt of hull) primaryPoly.push([pt.x, pt.y]);
+      const step = Math.max(1, Math.floor(hull.length / Math.min(6, hull.length)));
+      for (let i = 0; i < hull.length; i += step) {
+        if (hull[i].z > 0) dropAnchors.push([hull[i].x, hull[i].y, hull[i].z]);
+      }
+      centerU = (tb.minU + tb.maxU) * 0.5;
+      centerV = (tb.minV + tb.maxV) * 0.5;
+      centerTopZ = Math.max(0, (tb.minZ + tb.maxZ) * 0.5);
+      displayElevZ = Math.round(tb.minZ);
+    } else if (s.shapeType === 'loft') {
       const secs = normalizeLoftSections(s.loftSections);
       const botSec = s.flipZ ? secs[secs.length - 1] : secs[0];
       const topSec = s.flipZ ? secs[0] : secs[secs.length - 1];
@@ -336,7 +377,7 @@ export class View {
       }
       for (let i = 0; i < 4; i++) {
         const idx = Math.floor((i * primaryPoly.length) / 4);
-        if (primaryPoly[idx]) dropAnchors.push(primaryPoly[idx]);
+        if (primaryPoly[idx]) dropAnchors.push([primaryPoly[idx][0], primaryPoly[idx][1], z0]);
       }
     } else if (hasActiveColumnSections(s)) {
       const secs = normalizeColumnSections(s.colSections, s.shapeType, s.prismSides);
@@ -349,7 +390,7 @@ export class View {
       }
       const step = Math.max(1, Math.floor(primaryPoly.length / Math.min(4, primaryPoly.length)));
       for (let i = 0; i < primaryPoly.length && dropAnchors.length < 4; i += step) {
-        dropAnchors.push(primaryPoly[i]);
+        dropAnchors.push([primaryPoly[i][0], primaryPoly[i][1], z0]);
       }
     } else if (
       s.shapeType === 'cylinder' ||
@@ -366,7 +407,7 @@ export class View {
         const ang = (i * Math.PI * 2) / segs;
         primaryPoly.push([cu + Math.cos(ang) * ru, cv + Math.sin(ang) * rv]);
       }
-      dropAnchors.push([cu + ru, cv], [cu, cv + rv], [cu - ru, cv], [cu, cv - rv]);
+      dropAnchors.push([cu + ru, cv, z0], [cu, cv + rv, z0], [cu - ru, cv, z0], [cu, cv - rv, z0]);
     } else if (s.shapeType === 'prism') {
       const n = Math.max(3, Math.min(12, Math.round(s.prismSides)));
       const startAngle = Math.PI / n;
@@ -375,11 +416,11 @@ export class View {
         primaryPoly.push(localToView(0.5 + Math.cos(ang) * 0.5, 0.5 + Math.sin(ang) * 0.5));
       }
       const step = Math.max(1, Math.floor(n / Math.min(6, n)));
-      for (let i = 0; i < n; i += step) dropAnchors.push(primaryPoly[i]);
+      for (let i = 0; i < n; i += step) dropAnchors.push([primaryPoly[i][0], primaryPoly[i][1], z0]);
     } else if (s.shapeType === 'right_tri_prism' && (s.triPrismCut ?? 'vertical') === 'vertical') {
       const pts: [number, number][] = [localToView(0, 0), localToView(1, 0), localToView(0, 1)];
       primaryPoly.push(...pts);
-      dropAnchors.push(...pts);
+      for (const [pu, pv] of pts) dropAnchors.push([pu, pv, z0]);
     } else {
       const boxPts: [number, number][] = [
         [u0, v0],
@@ -388,7 +429,7 @@ export class View {
         [u0, v0 + sv],
       ];
       primaryPoly.push(...boxPts);
-      dropAnchors.push(...boxPts);
+      for (const [pu, pv] of boxPts) dropAnchors.push([pu, pv, z0]);
     }
 
     if (primaryPoly.length < 3) return;
@@ -405,12 +446,13 @@ export class View {
 
     ctx.save();
 
-    // Optional faint outer bounding diamond for round / loft shapes to aid 32x16 cell alignment
+    // Optional faint outer bounding diamond for upright round shapes to aid 32x16 cell alignment
     if (
-      s.shapeType === 'cylinder' ||
-      s.shapeType === 'cone' ||
-      s.shapeType === 'dome' ||
-      s.shapeType === 'sphere'
+      !isTilted &&
+      (s.shapeType === 'cylinder' ||
+        s.shapeType === 'cone' ||
+        s.shapeType === 'dome' ||
+        s.shapeType === 'sphere')
     ) {
       traceViewPolyAtZ0([
         [u0, v0],
@@ -442,13 +484,13 @@ export class View {
     ctx.setLineDash([5, 3]);
     ctx.stroke();
 
-    // Vertical drop guide lines from Z = z0 down to Z = 0
+    // Vertical drop guide lines from shape vertices down to Z = 0
     ctx.strokeStyle = 'rgba(52, 211, 153, 0.72)';
     ctx.lineWidth = 1.25;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
-    for (const [au, av] of dropAnchors) {
-      const [topX, topY] = toViewScreen(au, av, z0);
+    for (const [au, av, az] of dropAnchors) {
+      const [topX, topY] = toViewScreen(au, av, az);
       const [botX, botY] = toViewScreen(au, av, 0);
       ctx.moveTo(topX, topY);
       ctx.lineTo(botX, botY);
@@ -465,11 +507,9 @@ export class View {
       ctx.fill();
     }
 
-    // Center plumb line + ground target crosshair at (cu, cv, 0)
-    const cu = u0 + su * 0.5;
-    const cv = v0 + sv * 0.5;
-    const [cTopX, cTopY] = toViewScreen(cu, cv, z0);
-    const [cBotX, cBotY] = toViewScreen(cu, cv, 0);
+    // Center plumb line + ground target crosshair
+    const [cTopX, cTopY] = toViewScreen(centerU, centerV, centerTopZ);
+    const [cBotX, cBotY] = toViewScreen(centerU, centerV, 0);
     ctx.strokeStyle = 'rgba(110, 231, 183, 0.85)';
     ctx.lineWidth = 1.25;
     ctx.setLineDash([2, 3]);
@@ -503,7 +543,7 @@ export class View {
       ctx,
       cBotX,
       maxScreenY + 16,
-      `地面投影 · U:${fmt(s.u)} V:${fmt(s.v)} · 离地 ${z0}px (${zPxToMeters(z0).toFixed(2)}m)`,
+      `地面投影 · U:${fmt(s.u)} V:${fmt(s.v)} · 离地 ${displayElevZ}px (${zPxToMeters(displayElevZ).toFixed(2)}m)`,
       'rgba(8, 28, 24, 0.92)',
       '#34d399',
       '#a7f3d0',

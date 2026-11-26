@@ -104,6 +104,167 @@ export function openNewProjectDialog(app: App, afterFit: () => void) {
   });
 }
 
+export function openResizeCanvasDialog(app: App, afterFit: () => void) {
+  let syncBaseLayer = true;
+
+  const wIn = h('input', {
+    type: 'number',
+    class: 'num wide',
+    min: '32',
+    max: '2048',
+    step: '16',
+    value: String(app.doc.width),
+  }) as HTMLInputElement;
+  const hIn = h('input', {
+    type: 'number',
+    class: 'num wide',
+    min: '32',
+    max: '2048',
+    step: '16',
+    value: String(app.doc.height),
+  }) as HTMLInputElement;
+  const uIn = h('input', {
+    type: 'number',
+    class: 'num',
+    min: '1',
+    max: '24',
+    value: String(app.doc.plotU),
+  }) as HTMLInputElement;
+  const vIn = h('input', {
+    type: 'number',
+    class: 'num',
+    min: '1',
+    max: '24',
+    value: String(app.doc.plotV),
+  }) as HTMLInputElement;
+  const marginIn = h('input', {
+    type: 'number',
+    class: 'num',
+    min: '0',
+    max: '256',
+    step: '4',
+    value: String(app.doc.bottomMarginPx),
+  }) as HTMLInputElement;
+
+  const readValues = () => ({
+    w: clamp(Math.round(+wIn.value || app.doc.width), 32, 2048),
+    h: clamp(Math.round(+hIn.value || app.doc.height), 32, 2048),
+    u: clamp(Math.round(+uIn.value || app.doc.plotU), 1, 24),
+    v: clamp(Math.round(+vIn.value || app.doc.plotV), 1, 24),
+    margin: clamp(Math.round(+marginIn.value || 0), 0, 256),
+  });
+
+  const hintEl = h('div', { class: 'hint' });
+  const updateHint = () => {
+    const { w, h: ch, u, v, margin } = readValues();
+    const minPlotW = (u + v) * 16;
+    const minPlotH = (u + v) * 8 + margin;
+    if (w < minPlotW || ch < minPlotH) {
+      hintEl.textContent = tr(`⚠️ 当前输入小于场地最小投影 (${minPlotW}×${minPlotH} px)，边缘图形可能被裁切。`);
+      return;
+    }
+    const rec = app.doc.computeRecommendedCanvasSize(u, v, margin);
+    if (w < rec.width || ch < rec.height) {
+      hintEl.textContent = tr(`⚠️ 画布略小，建议至少 ${rec.width}×${rec.height} px 以完整容纳当前模型。`);
+      return;
+    }
+    hintEl.textContent = tr('✅ 所有 3D 图层将按新尺寸无损重绘，参考底图自动对齐原点（支持 Ctrl+Z 撤回）。');
+  };
+  for (const inp of [wIn, hIn, uIn, vIn, marginIn]) {
+    inp.oninput = updateHint;
+    inp.onchange = updateHint;
+  }
+  updateHint();
+
+  const body = h(
+    'div',
+    { style: 'display:flex;flex-direction:column;gap:8px' },
+    h('div', { class: 'hint' }, tr(`当前画布：${app.doc.width}×${app.doc.height} px · 场地 ${app.doc.plotU}×${app.doc.plotV} 格`)),
+    h('div', { class: 'menu-sec' }, '画布像素尺寸'),
+    h(
+      'div',
+      { class: 'preset-row' },
+      ...[
+        [128, 128, '128×128'],
+        [256, 256, '256×256'],
+        [256, 384, '256×384 (高楼)'],
+        [384, 384, '384×384'],
+        [512, 512, '512×512'],
+        [512, 1024, '512×1024 (摩天楼)'],
+      ].map(([pw, ph, lbl]) =>
+        h('button', {
+          type: 'button',
+          class: 'btn small',
+          onclick: () => {
+            wIn.value = String(pw);
+            hIn.value = String(ph);
+            updateHint();
+          },
+        }, lbl as string),
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn small accent',
+          title: '按当前所有可见 3D 图形在四个视角下的最大边界自动计算推荐画布尺寸',
+          onclick: () => {
+            const { u, v, margin } = readValues();
+            const rec = app.doc.computeRecommendedCanvasSize(u, v, margin);
+            wIn.value = String(rec.width);
+            hIn.value = String(rec.height);
+            updateHint();
+            toast(`🎯 已填入推荐画布尺寸：${rec.width}×${rec.height} px`);
+          },
+        },
+        '🎯 适配当前模型',
+      ),
+    ),
+    h('div', { class: 'range-row' }, h('span', { class: 'rl' }, '画布宽'), wIn, h('span', { class: 'rl' }, '画布高'), hIn),
+    h('div', { class: 'menu-sec' }, 'TheoTown 场地格数（每格 32×16 px = 9.6×9.6 m）'),
+    h(
+      'div',
+      { class: 'preset-row' },
+      ...[1, 2, 3, 4, 6, 8].map((n) =>
+        h('button', {
+          type: 'button',
+          class: 'btn small',
+          onclick: () => {
+            uIn.value = String(n);
+            vIn.value = String(n);
+            updateHint();
+          },
+        }, `${n}×${n}`),
+      ),
+    ),
+    h('div', { class: 'range-row' }, h('span', { class: 'rl' }, '场地 U 格'), uIn, h('span', { class: 'rl' }, '场地 V 格'), vIn),
+    h('div', { class: 'range-row' }, h('span', { class: 'rl' }, '底部留白 (px)'), marginIn),
+    toggle('同步调整默认绿地底座尺寸', syncBaseLayer, (v) => { syncBaseLayer = v; }),
+    hintEl,
+  );
+
+  let close = () => {};
+  close = openSheet('📐 修改当前项目画布尺寸', body, {
+    actions: [
+      h('button', { class: 'btn', onclick: () => close() }, '取消'),
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          const { w, h: ch, u, v, margin } = readValues();
+          const changed = app.resizeCanvas(w, ch, u, v, margin, { syncBaseLayer });
+          close();
+          if (changed) {
+            afterFit();
+            toast(`📐 已调整画布尺寸为 ${w}×${ch} (${u}×${v}格)`);
+          } else {
+            toast('画布尺寸未发生变化');
+          }
+        },
+      }, '✓ 应用尺寸'),
+    ],
+  });
+}
+
 export async function openProjectHome(app: App, afterFit: () => void) {
   await app.autosave();
   let close = () => {};
@@ -180,6 +341,13 @@ export async function openProjectHome(app: App, afterFit: () => void) {
           openNewProjectDialog(app, afterFit);
         },
       }, '✨ 新建项目'),
+      h('button', {
+        class: 'btn',
+        onclick: () => {
+          close();
+          openResizeCanvasDialog(app, afterFit);
+        },
+      }, '📐 修改画布尺寸'),
       h('button', {
         class: 'btn',
         onclick: async () => {
@@ -840,6 +1008,10 @@ export function openSettingsDialog(app: App) {
     }),
     toggle('拖拽移动时自动叠放到下方物体顶面', app.settings.autoStackSnap, (v) => {
       app.settings.autoStackSnap = v;
+      app.saveSettings();
+    }),
+    toggle('🧲 倾斜时自动贴地（防止穿入地下）', app.settings.keepGroundedOnTilt, (v) => {
+      app.settings.keepGroundedOnTilt = v;
       app.saveSettings();
     }),
     toggle('启用双指撤回 / 三指重做手势', app.settings.gestureUndoRedo, (v) => {

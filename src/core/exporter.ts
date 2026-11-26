@@ -13,7 +13,7 @@ import {
 } from './groundShadow';
 import { BuilderDocument, BuilderLayer, type BlendMode, type PlotFrameConfig } from './document';
 import { getDocumentContentBounds } from './psd';
-import { clampShadeContrast, cloneShape, normalizeShadeSteps, type ParametricShape } from './isoRenderer';
+import { clampShadeContrast, cloneShape, normalizeShadeSteps, normalizeTiltDeg, type ParametricShape } from './isoRenderer';
 import type { ViewRotation } from './isoMath';
 import { ensureActiveLoftSection, normalizeLoftSections } from './loft';
 import {
@@ -284,6 +284,20 @@ export async function deserializeBmeowProject(jsonText: string): Promise<{ doc: 
         sl.shape.flipZ = true;
       } else {
         delete sl.shape.flipZ;
+      }
+      if (sl.shape.shapeType !== 'theotown_base') {
+        const tu = normalizeTiltDeg(sl.shape.tiltUDeg);
+        const tv = normalizeTiltDeg(sl.shape.tiltVDeg);
+        if (tu !== 0) sl.shape.tiltUDeg = tu;
+        else delete sl.shape.tiltUDeg;
+        if (tv !== 0) sl.shape.tiltVDeg = tv;
+        else delete sl.shape.tiltVDeg;
+        if (sl.shape.tiltPivot === 'bottom') sl.shape.tiltPivot = 'bottom';
+        else delete sl.shape.tiltPivot;
+      } else {
+        delete sl.shape.tiltUDeg;
+        delete sl.shape.tiltVDeg;
+        delete sl.shape.tiltPivot;
       }
       sl.shape.shadeContrast = clampShadeContrast(sl.shape.shadeContrast);
       if (sl.shape.shapeType === 'loft') {

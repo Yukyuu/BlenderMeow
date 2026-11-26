@@ -14,10 +14,15 @@ import {
   type ViewRotation,
 } from './isoMath';
 import {
+  buildTiltTransform,
   cloneShape,
   getShapeScreenBounds,
+  getShapeTiltedViewBounds,
+  getShapeTiltedZRange,
+  hasActiveTilt,
   normalizeShadeSteps,
   renderShapeToBuffer,
+  transformLocalPointWithTilt,
   transformLocalToViewPoint,
   type ParametricShape,
 } from './isoRenderer';
@@ -346,28 +351,38 @@ function computeEffectiveBox2D(
   } else if (hasActiveColumnSections(s)) {
     lb = getColumnLocalBounds(s);
   }
-  if (!lb) {
+  const hasTilt = hasActiveTilt(s);
+  if (!lb && !hasTilt) {
     return { u0: baseU, u1: baseU + su, v0: baseV, v1: baseV + sv };
   }
-  const lu0 = Math.min(0, lb.minU);
-  const lu1 = Math.max(1, lb.maxU);
-  const lv0 = Math.min(0, lb.minV);
-  const lv1 = Math.max(1, lb.maxV);
+  const lu0 = lb ? Math.min(0, lb.minU) : 0;
+  const lu1 = lb ? Math.max(1, lb.maxU) : 1;
+  const lv0 = lb ? Math.min(0, lb.minV) : 0;
+  const lv1 = lb ? Math.max(1, lb.maxV) : 1;
+  const z0 = Math.round(s.zPx);
+  const z1 = z0 + Math.max(0, Math.round(s.heightPx));
+  const tilt = hasTilt
+    ? buildTiltTransform(baseU, baseV, su, sv, z0, z1, ori, s.tiltUDeg, s.tiltVDeg, s.tiltPivot, s)
+    : null;
   let minU = Infinity;
   let maxU = -Infinity;
   let minV = Infinity;
   let maxV = -Infinity;
-  for (const [lu, lv] of [
-    [lu0, lv0],
-    [lu1, lv0],
-    [lu1, lv1],
-    [lu0, lv1],
-  ]) {
-    const pt = transformLocalToViewPoint(lu, lv, 0, baseU, baseV, su, sv, ori);
-    if (pt.x < minU) minU = pt.x;
-    if (pt.x > maxU) maxU = pt.x;
-    if (pt.y < minV) minV = pt.y;
-    if (pt.y > maxV) maxV = pt.y;
+  for (const zc of tilt ? [z0, z1] : [0]) {
+    for (const [lu, lv] of [
+      [lu0, lv0],
+      [lu1, lv0],
+      [lu1, lv1],
+      [lu0, lv1],
+    ]) {
+      const pt = tilt
+        ? transformLocalPointWithTilt(lu, lv, zc, tilt)
+        : transformLocalToViewPoint(lu, lv, 0, baseU, baseV, su, sv, ori);
+      if (pt.x < minU) minU = pt.x;
+      if (pt.x > maxU) maxU = pt.x;
+      if (pt.y < minV) minV = pt.y;
+      if (pt.y > maxV) maxV = pt.y;
+    }
   }
   return { u0: minU, u1: maxU, v0: minV, v1: maxV };
 }
@@ -620,13 +635,25 @@ export class BuilderDocument {
         const vb = worldBoxToView(s.u, s.v, s.sizeU, s.sizeV, s.ori, this.plotU, this.plotV, this.viewRotation);
         const su = Math.max(0.0625, vb.sizeU);
         const sv = Math.max(0.0625, vb.sizeV);
-        const eff = computeEffectiveBox2D(s, vb.u, vb.v, su, sv, vb.ori);
-        const z0 = s.zPx;
-        const z1 = s.zPx + s.heightPx;
+        const isTilted = hasActiveTilt(s);
+        let effU0: number, effU1: number, effV0: number, effV1: number;
+        let z0: number, z1: number;
+        if (isTilted) {
+          const tb = getShapeTiltedViewBounds(s, this.plotU, this.plotV, this.viewRotation);
+          effU0 = tb.minU; effU1 = tb.maxU;
+          effV0 = tb.minV; effV1 = tb.maxV;
+          z0 = tb.minZ; z1 = tb.maxZ;
+        } else {
+          const eff = computeEffectiveBox2D(s, vb.u, vb.v, su, sv, vb.ori);
+          effU0 = eff.u0; effU1 = eff.u1;
+          effV0 = eff.v0; effV1 = eff.v1;
+          z0 = s.zPx;
+          z1 = s.zPx + s.heightPx;
+        }
         const scr = getShapeScreenBounds(s, this.plotU, this.plotV, this.viewRotation, originX, originY);
-        let cu = (eff.u0 + eff.u1) * 0.5;
-        let cv = (eff.v0 + eff.v1) * 0.5;
-        const isVertTriPrism = s.shapeType === 'right_tri_prism' && (s.triPrismCut ?? 'vertical') === 'vertical';
+        let cu = (effU0 + effU1) * 0.5;
+        let cv = (effV0 + effV1) * 0.5;
+        const isVertTriPrism = !isTilted && s.shapeType === 'right_tri_prism' && (s.triPrismCut ?? 'vertical') === 'vertical';
         if (isVertTriPrism) {
           switch (vb.ori) {
             case 0:
@@ -649,10 +676,10 @@ export class BuilderDocument {
         }
         const key = (cu + cv) * 1000 + (z0 + z1) * 0.5;
         return {
-          u0: eff.u0,
-          u1: eff.u1,
-          v0: eff.v0,
-          v1: eff.v1,
+          u0: effU0,
+          u1: effU1,
+          v0: effV0,
+          v1: effV1,
           z0,
           z1,
           scr,
@@ -755,6 +782,10 @@ export class BuilderDocument {
       const overlapU = u < wf.u1 - eps && u + sizeU > wf.u0 + eps;
       const overlapV = v < wf.v1 - eps && v + sizeV > wf.v0 + eps;
       if (overlapU && overlapV) {
+        if (hasActiveTilt(s)) {
+          maxTop = Math.max(maxTop, getShapeTiltedZRange(s).maxZ);
+          continue;
+        }
         if (
           s.shapeType === 'right_tri_prism' &&
           (s.triPrismCut ?? 'vertical') === 'vertical' &&
@@ -1261,47 +1292,136 @@ export class BuilderDocument {
     return out;
   }
 
-  resize(w: number, h: number, plotU = this.plotU, plotV = this.plotV, bottomMarginPx = this.bottomMarginPx) {
+  computeRecommendedCanvasSize(
+    plotU = this.plotU,
+    plotV = this.plotV,
+    bottomMarginPx = this.bottomMarginPx,
+  ): { width: number; height: number } {
+    const pU = Math.max(1, Math.min(24, Math.round(plotU)));
+    const pV = Math.max(1, Math.min(24, Math.round(plotV)));
+    const margin = Math.max(0, Math.min(256, Math.round(bottomMarginPx)));
+    const pad = 12;
+    let reqW = 64;
+    let reqH = 64;
+
+    for (const rot of [0, 1, 2, 3] as ViewRotation[]) {
+      const { viewPlotU, viewPlotV } = getViewPlotDims(pU, pV, rot);
+      let minXRel = -viewPlotV * 16;
+      let maxXRel = viewPlotU * 16;
+      let minYRel = 0;
+      let maxYRel = (viewPlotU + viewPlotV) * 8;
+
+      for (const l of this.layers) {
+        if (!l.visible || l.kind !== 'shape' || !l.shape) continue;
+        const b = getShapeScreenBounds(l.shape, pU, pV, rot, 0, 0);
+        if (!Number.isFinite(b.minX) || !Number.isFinite(b.maxX)) continue;
+        if (b.minX < minXRel) minXRel = b.minX;
+        if (b.maxX > maxXRel) maxXRel = b.maxX;
+        if (b.minY < minYRel) minYRel = b.minY;
+        if (b.maxY > maxYRel) maxYRel = b.maxY;
+        if (this.groundShadow.enabled && l.shape.shapeType !== 'theotown_base' && l.shape.heightPx > 0) {
+          const maxZ = hasActiveTilt(l.shape)
+            ? getShapeTiltedZRange(l.shape).maxZ
+            : l.shape.zPx + l.shape.heightPx;
+          if (maxZ > 0) {
+            const shadowRight = b.maxX + maxZ;
+            if (shadowRight > maxXRel) maxXRel = shadowRight;
+          }
+        }
+      }
+
+      const xShift = (viewPlotV - viewPlotU) * 8;
+      const wLeft = 2 * (pad - minXRel - xShift);
+      const wRight = 2 * (pad + maxXRel + xShift);
+      const hTop = pad + margin + (viewPlotU + viewPlotV) * 8 - minYRel;
+      const hSpan = maxYRel - minYRel + pad * 2;
+      if (wLeft > reqW) reqW = wLeft;
+      if (wRight > reqW) reqW = wRight;
+      if (hTop > reqH) reqH = hTop;
+      if (hSpan > reqH) reqH = hSpan;
+    }
+
+    const round16 = (v: number) => Math.max(64, Math.min(2048, Math.ceil(v / 16) * 16));
+    return { width: round16(reqW), height: round16(reqH) };
+  }
+
+  resize(
+    w: number,
+    h: number,
+    plotU = this.plotU,
+    plotV = this.plotV,
+    bottomMarginPx = this.bottomMarginPx,
+    opts?: { rasterDx?: number; rasterDy?: number; syncBaseLayer?: boolean },
+  ) {
+    const nw = Math.max(32, Math.min(2048, Math.round(w)));
+    const nh = Math.max(32, Math.min(2048, Math.round(h)));
+    const nPlotU = Math.max(1, Math.min(24, Math.round(plotU)));
+    const nPlotV = Math.max(1, Math.min(24, Math.round(plotV)));
+    const nMargin = Math.max(0, Math.min(256, Math.round(bottomMarginPx)));
+
     const prevOrigin = this.getViewOrigin();
     const prevPlotU = this.plotU;
     const prevPlotV = this.plotV;
-    this.width = w;
-    this.height = h;
-    this.plotU = plotU;
-    this.plotV = plotV;
-    this.bottomMarginPx = bottomMarginPx;
+    this.width = nw;
+    this.height = nh;
+    this.plotU = nPlotU;
+    this.plotV = nPlotV;
+    this.bottomMarginPx = nMargin;
     if (
       this.plotFrame.u === 0
       && this.plotFrame.v === 0
       && this.plotFrame.sizeU === prevPlotU
       && this.plotFrame.sizeV === prevPlotV
     ) {
-      this.plotFrame.sizeU = plotU;
-      this.plotFrame.sizeV = plotV;
+      this.plotFrame.sizeU = nPlotU;
+      this.plotFrame.sizeV = nPlotV;
+    }
+    if (opts?.syncBaseLayer && (nPlotU !== prevPlotU || nPlotV !== prevPlotV)) {
+      const prevBaseRe = new RegExp(`^TheoTown ${prevPlotU}×${prevPlotV} (?:绿地底座|底座|Base)$`);
+      for (const l of this.layers) {
+        if (
+          l.kind === 'shape'
+          && l.shape?.shapeType === 'theotown_base'
+          && Math.abs(l.shape.u) < 1e-6
+          && Math.abs(l.shape.v) < 1e-6
+          && Math.round(l.shape.sizeU) === prevPlotU
+          && Math.round(l.shape.sizeV) === prevPlotV
+        ) {
+          l.shape.sizeU = nPlotU;
+          l.shape.sizeV = nPlotV;
+          if (prevBaseRe.test(l.name)) {
+            l.name = tr(`TheoTown ${nPlotU}×${nPlotV} 底座`);
+          }
+        }
+      }
     }
     const nextOrigin = this.getViewOrigin();
     if (this.composite) {
-      this.composite.width = w;
-      this.composite.height = h;
+      this.composite.width = nw;
+      this.composite.height = nh;
     }
-    this.resizeShadowBuffers(w, h);
-    const dx = Math.round(nextOrigin.originX - prevOrigin.originX);
-    const dy = Math.round(nextOrigin.originY - prevOrigin.originY);
+    this.resizeShadowBuffers(nw, nh);
+    const dx = opts?.rasterDx !== undefined
+      ? Math.round(opts.rasterDx)
+      : Math.round(nextOrigin.originX - prevOrigin.originX);
+    const dy = opts?.rasterDy !== undefined
+      ? Math.round(opts.rasterDy)
+      : Math.round(nextOrigin.originY - prevOrigin.originY);
     for (const l of this.layers) {
       if (l.kind === 'shape') {
         this.rerenderShapeLayer(l);
       } else {
         const prev = new Uint8ClampedArray(l.data);
         const pw = l.width, ph = l.height;
-        l.resizeBuffer(w, h);
+        l.resizeBuffer(nw, nh);
         for (let y = 0; y < ph; y++) {
           const ty = y + dy;
-          if (ty < 0 || ty >= h) continue;
+          if (ty < 0 || ty >= nh) continue;
           for (let x = 0; x < pw; x++) {
             const tx = x + dx;
-            if (tx < 0 || tx >= w) continue;
+            if (tx < 0 || tx >= nw) continue;
             const si = (y * pw + x) * 4;
-            const di = (ty * w + tx) * 4;
+            const di = (ty * nw + tx) * 4;
             l.data[di] = prev[si];
             l.data[di + 1] = prev[si + 1];
             l.data[di + 2] = prev[si + 2];

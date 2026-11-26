@@ -110,6 +110,13 @@ html, body {
   border: 1px solid var(--border);
   color: var(--accent);
   white-space: nowrap;
+  cursor: pointer;
+  line-height: 1.35;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.canvas-size-pill:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 .cursor-info {
   font-size: 10px;

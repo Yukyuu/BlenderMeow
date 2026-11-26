@@ -47,6 +47,7 @@ export interface Settings {
   showIsoGrid: boolean;
   isoGridColor: RGBA;
   showGroundProjection: boolean;
+  keepGroundedOnTilt: boolean;
   snapEnabled: boolean;
   snapStep: GridSnapStep;
   showPixelGrid: boolean;
@@ -149,6 +150,7 @@ export class App {
       showIsoGrid: true,
       isoGridColor: { ...DEFAULT_ISO_GRID_COLOR },
       showGroundProjection: true,
+      keepGroundedOnTilt: true,
       snapEnabled: true,
       snapStep: 1,
       showPixelGrid: true,
@@ -180,6 +182,7 @@ export class App {
       merged.shadeSteps = normalizeShadeSteps(merged.shadeSteps);
       merged.dockedTextureLibrary = Boolean(merged.dockedTextureLibrary);
       merged.showGroundProjection = parsed.showGroundProjection !== undefined ? Boolean(parsed.showGroundProjection) : true;
+      merged.keepGroundedOnTilt = parsed.keepGroundedOnTilt !== undefined ? Boolean(parsed.keepGroundedOnTilt) : true;
       const rawGrid = parsed.isoGridColor;
       merged.isoGridColor =
         rawGrid &&
@@ -343,6 +346,38 @@ export class App {
     this.history.clear();
     this.emit('doc');
     this.emit('layers');
+  }
+
+  resizeCanvas(
+    w: number,
+    h: number,
+    plotU = this.doc.plotU,
+    plotV = this.doc.plotV,
+    bottomMarginPx = this.doc.bottomMarginPx,
+    opts?: { rasterDx?: number; rasterDy?: number; syncBaseLayer?: boolean },
+  ): boolean {
+    const nw = Math.max(32, Math.min(2048, Math.round(w)));
+    const nh = Math.max(32, Math.min(2048, Math.round(h)));
+    const nPlotU = Math.max(1, Math.min(24, Math.round(plotU)));
+    const nPlotV = Math.max(1, Math.min(24, Math.round(plotV)));
+    const nMargin = Math.max(0, Math.min(256, Math.round(bottomMarginPx)));
+    if (
+      nw === this.doc.width
+      && nh === this.doc.height
+      && nPlotU === this.doc.plotU
+      && nPlotV === this.doc.plotV
+      && nMargin === this.doc.bottomMarginPx
+      && opts?.rasterDx === undefined
+      && opts?.rasterDy === undefined
+    ) {
+      return false;
+    }
+    this.cancelActiveTool?.();
+    this.pushHistory(`调整画布尺寸为 ${nw}×${nh}`);
+    this.doc.resize(nw, nh, nPlotU, nPlotV, nMargin, opts);
+    this.emit('doc');
+    this.emit('layers');
+    return true;
   }
 
   setTool(t: ToolId) {

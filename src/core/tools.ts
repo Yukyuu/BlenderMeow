@@ -22,10 +22,17 @@ import {
   zPxToMeters,
 } from './isoMath';
 import {
+  buildTiltTransform,
   cloneShape,
+  computeZPxForTargetMinZ,
   getPlanarFaceScreenOverlay,
   getShapeScreenBounds,
+  getShapeTiltedZRange,
+  hasActiveTilt,
+  normalizeTiltDeg,
   renderShapeToBuffer,
+  tiltVec3WithTransform,
+  transformLocalPointWithTilt,
   transformLocalToViewPoint,
   type ParametricShape,
 } from './isoRenderer';
@@ -178,19 +185,39 @@ export class SelectGizmoTool implements Tool {
     const s = l.shape!;
     const { originX, originY } = d.getViewOrigin();
     const vb = worldBoxToView(s.u, s.v, s.sizeU, s.sizeV, s.ori, d.plotU, d.plotV, d.viewRotation);
-    const z0 = s.zPx;
-    const z1 = s.zPx + s.heightPx;
+    const z0 = Math.round(s.zPx);
+    const z1 = z0 + Math.max(0, Math.round(s.heightPx));
+    const tilt = hasActiveTilt(s) && s.heightPx > 0
+      ? buildTiltTransform(
+          vb.u,
+          vb.v,
+          Math.max(0.0625, vb.sizeU),
+          Math.max(0.0625, vb.sizeV),
+          z0,
+          z1,
+          vb.ori,
+          s.tiltUDeg,
+          s.tiltVDeg,
+          s.tiltPivot,
+          s,
+        )
+      : null;
+    const ptToScreen = (vx: number, vy: number, vz: number): [number, number] => {
+      if (!tilt) return isoToScreenPx(vx, vy, vz, originX, originY);
+      const p3 = tiltVec3WithTransform({ x: vx, y: vy, z: vz }, tilt);
+      return isoToScreenPx(p3.x, p3.y, p3.z, originX, originY);
+    };
 
-    const topCenter = isoToScreenPx(vb.u + vb.sizeU * 0.5, vb.v + vb.sizeV * 0.5, z1, originX, originY);
-    const zLiftAnchor = isoToScreenPx(vb.u + vb.sizeU, vb.v, z0 + s.heightPx * 0.5, originX, originY);
+    const topCenter = ptToScreen(vb.u + vb.sizeU * 0.5, vb.v + vb.sizeV * 0.5, z1);
+    const zLiftAnchor = ptToScreen(vb.u + vb.sizeU, vb.v, z0 + s.heightPx * 0.5);
     const zLiftHandle: [number, number] = [zLiftAnchor[0] + 10 / Math.max(1, this.host.scale() * 0.25), zLiftAnchor[1]];
 
-    const edgeUMin = isoToScreenPx(vb.u, vb.v + vb.sizeV * 0.5, z0, originX, originY);
-    const edgeUMax = isoToScreenPx(vb.u + vb.sizeU, vb.v + vb.sizeV * 0.5, z0, originX, originY);
-    const edgeVMin = isoToScreenPx(vb.u + vb.sizeU * 0.5, vb.v, z0, originX, originY);
-    const edgeVMax = isoToScreenPx(vb.u + vb.sizeU * 0.5, vb.v + vb.sizeV, z0, originX, originY);
+    const edgeUMin = ptToScreen(vb.u, vb.v + vb.sizeV * 0.5, z0);
+    const edgeUMax = ptToScreen(vb.u + vb.sizeU, vb.v + vb.sizeV * 0.5, z0);
+    const edgeVMin = ptToScreen(vb.u + vb.sizeU * 0.5, vb.v, z0);
+    const edgeVMax = ptToScreen(vb.u + vb.sizeU * 0.5, vb.v + vb.sizeV, z0);
 
-    return { vb, originX, originY, topCenter, zLiftHandle, edgeUMin, edgeUMax, edgeVMin, edgeVMax };
+    return { vb, originX, originY, topCenter, zLiftHandle, edgeUMin, edgeUMax, edgeVMin, edgeVMax, tilt };
   }
 
   private getLoftSectionHandles(l: BuilderLayer): { id: string; name: string; t: number; pos: [number, number] }[] {
@@ -199,11 +226,31 @@ export class SelectGizmoTool implements Tool {
     const d = this.host.app.doc;
     const { originX, originY } = d.getViewOrigin();
     const vb = worldBoxToView(s.u, s.v, s.sizeU, s.sizeV, s.ori, d.plotU, d.plotV, d.viewRotation);
+    const z0 = Math.round(s.zPx);
+    const z1 = z0 + Math.round(s.heightPx);
+    const tilt = hasActiveTilt(s)
+      ? buildTiltTransform(
+          vb.u,
+          vb.v,
+          Math.max(0.0625, vb.sizeU),
+          Math.max(0.0625, vb.sizeV),
+          z0,
+          z1,
+          vb.ori,
+          s.tiltUDeg,
+          s.tiltVDeg,
+          s.tiltPivot,
+          s,
+        )
+      : null;
     const secs = normalizeLoftSections(s.loftSections);
     const shiftX = 10 / Math.max(1, this.host.scale() * 0.25);
     return secs.map((sec) => {
-      const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
-      const anchor = isoToScreenPx(vb.u, vb.v + vb.sizeV, zSec, originX, originY);
+      const zSec = z0 + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
+      const p3 = tilt
+        ? tiltVec3WithTransform({ x: vb.u, y: vb.v + vb.sizeV, z: zSec }, tilt)
+        : { x: vb.u, y: vb.v + vb.sizeV, z: zSec };
+      const anchor = isoToScreenPx(p3.x, p3.y, p3.z, originX, originY);
       return {
         id: sec.id,
         name: sec.name,
@@ -219,11 +266,31 @@ export class SelectGizmoTool implements Tool {
     const d = this.host.app.doc;
     const { originX, originY } = d.getViewOrigin();
     const vb = worldBoxToView(s.u, s.v, s.sizeU, s.sizeV, s.ori, d.plotU, d.plotV, d.viewRotation);
+    const z0 = Math.round(s.zPx);
+    const z1 = z0 + Math.round(s.heightPx);
+    const tilt = hasActiveTilt(s)
+      ? buildTiltTransform(
+          vb.u,
+          vb.v,
+          Math.max(0.0625, vb.sizeU),
+          Math.max(0.0625, vb.sizeV),
+          z0,
+          z1,
+          vb.ori,
+          s.tiltUDeg,
+          s.tiltVDeg,
+          s.tiltPivot,
+          s,
+        )
+      : null;
     const secs = normalizeColumnSections(s.colSections, s.shapeType, s.prismSides);
     const shiftX = 10 / Math.max(1, this.host.scale() * 0.25);
     return secs.map((sec) => {
-      const zSec = s.zPx + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
-      const anchor = isoToScreenPx(vb.u, vb.v + vb.sizeV, zSec, originX, originY);
+      const zSec = z0 + (s.flipZ ? 1 - sec.t : sec.t) * s.heightPx;
+      const p3 = tilt
+        ? tiltVec3WithTransform({ x: vb.u, y: vb.v + vb.sizeV, z: zSec }, tilt)
+        : { x: vb.u, y: vb.v + vb.sizeV, z: zSec };
+      const anchor = isoToScreenPx(p3.x, p3.y, p3.z, originX, originY);
       return {
         id: sec.id,
         name: sec.name,
@@ -262,10 +329,23 @@ export class SelectGizmoTool implements Tool {
     if (near(pts.edgeUMin, tol)) return 'edge_umin';
     if (near(pts.edgeVMin, tol)) return 'edge_vmin';
 
-    // Check if pointer is inside footprint at z0 or z1 or opaque pixels of this layer
+    // Check opaque pixels of this layer; when tilted, do NOT fall back to the un-tilted base diamond
     const d = this.host.app.doc;
     const ix = Math.floor(p.x);
     const iy = Math.floor(p.y);
+    if (hasActiveTilt(l.shape)) {
+      const pixTol = Math.max(1, Math.round(4 / Math.max(1, this.host.scale())));
+      for (let dy = -pixTol; dy <= pixTol; dy++) {
+        const y = iy + dy;
+        if (y < 0 || y >= d.height) continue;
+        for (let dx = -pixTol; dx <= pixTol; dx++) {
+          const x = ix + dx;
+          if (x < 0 || x >= d.width) continue;
+          if (l.data[(y * d.width + x) * 4 + 3] > 0) return 'move';
+        }
+      }
+      return 'none';
+    }
     if (ix >= 0 && iy >= 0 && ix < d.width && iy < d.height) {
       if (l.data[(iy * d.width + ix) * 4 + 3] > 0) return 'move';
     }
@@ -343,13 +423,45 @@ export class SelectGizmoTool implements Tool {
     const minSize = isBase ? 1 : Math.max(0.25, snap >= 1 ? 1 : snap);
     const { originX, originY } = d.getViewOrigin();
 
+    const computeDeltaAlongLocalZ = (): number => {
+      if (!hasActiveTilt(this.origShape!) || this.origShape!.heightPx <= 0) {
+        return -(p.y - this.dragStart[1]);
+      }
+      const origZ0 = Math.round(this.origShape!.zPx);
+      const origZ1 = origZ0 + Math.round(this.origShape!.heightPx);
+      const origTilt = buildTiltTransform(
+        this.origViewBox!.u,
+        this.origViewBox!.v,
+        Math.max(0.0625, this.origViewBox!.sizeU),
+        Math.max(0.0625, this.origViewBox!.sizeV),
+        origZ0,
+        origZ1,
+        this.origViewBox!.ori,
+        this.origShape!.tiltUDeg,
+        this.origShape!.tiltVDeg,
+        this.origShape!.tiltPivot,
+        this.origShape!,
+      );
+      const pBot = transformLocalPointWithTilt(0.5, 0.5, origZ0, origTilt);
+      const pTop = transformLocalPointWithTilt(0.5, 0.5, origZ1, origTilt);
+      const [bx, by] = isoToScreenPx(pBot.x, pBot.y, pBot.z, originX, originY);
+      const [tx, ty] = isoToScreenPx(pTop.x, pTop.y, pTop.z, originX, originY);
+      const ax = tx - bx;
+      const ay = ty - by;
+      const axisLen = Math.hypot(ax, ay);
+      if (axisLen <= 1e-3) return -(p.y - this.dragStart[1]);
+      const pxPerH = axisLen / Math.max(1, this.origShape!.heightPx);
+      const proj = ((p.x - this.dragStart[0]) * ax + (p.y - this.dragStart[1]) * ay) / axisLen;
+      return proj / Math.max(0.15, pxPerH);
+    };
+
     if (this.dragHandle.startsWith('loft_sec:')) {
       const secId = this.dragHandle.slice('loft_sec:'.length);
       const origSec = this.origShape.loftSections?.find((sec) => sec.id === secId);
       const targetSec = s.loftSections?.find((sec) => sec.id === secId);
       if (origSec && targetSec && this.origShape.heightPx > 0) {
-        const dy = p.y - this.dragStart[1];
-        const deltaT = s.flipZ ? dy / this.origShape.heightPx : -dy / this.origShape.heightPx;
+        const deltaH = computeDeltaAlongLocalZ();
+        const deltaT = s.flipZ ? -deltaH / this.origShape.heightPx : deltaH / this.origShape.heightPx;
         targetSec.t = clamp(Math.round((origSec.t + deltaT) * 100) / 100, 0, 1);
         s.activeLoftSectionId = secId;
         const ori = normalizeRotation(s.ori);
@@ -362,18 +474,18 @@ export class SelectGizmoTool implements Tool {
       const origSec = this.origShape.colSections?.find((sec) => sec.id === secId);
       const targetSec = s.colSections?.find((sec) => sec.id === secId);
       if (origSec && targetSec && this.origShape.heightPx > 0) {
-        const dy = p.y - this.dragStart[1];
-        const deltaT = s.flipZ ? dy / this.origShape.heightPx : -dy / this.origShape.heightPx;
+        const deltaH = computeDeltaAlongLocalZ();
+        const deltaT = s.flipZ ? -deltaH / this.origShape.heightPx : deltaH / this.origShape.heightPx;
         targetSec.t = clamp(Math.round((origSec.t + deltaT) * 100) / 100, 0, 1);
         s.activeColSectionId = secId;
         syncColumnTransitionSections(s);
       }
     } else if (this.dragHandle === 'height') {
-      const dy = p.y - this.dragStart[1];
-      s.heightPx = clamp(Math.round(this.origShape.heightPx - dy), 1, 1024);
+      const deltaH = computeDeltaAlongLocalZ();
+      s.heightPx = clamp(Math.round(this.origShape.heightPx + deltaH), 1, 1024);
     } else if (this.dragHandle === 'z_lift' || (this.dragHandle === 'move' && app.settings.selectDragMode === 'vertical_z')) {
       const dy = p.y - this.dragStart[1];
-      s.zPx = clamp(Math.round(this.origShape.zPx - dy), 0, 1024);
+      s.zPx = clamp(Math.round(this.origShape.zPx - dy), hasActiveTilt(s) ? -512 : 0, 1024);
     } else {
       const [uStart, vStart] = screenPxToIsoAtZ(this.dragStart[0], this.dragStart[1], this.origShape.zPx, originX, originY);
       const [uNow, vNow] = screenPxToIsoAtZ(p.x, p.y, this.origShape.zPx, originX, originY);
@@ -411,7 +523,8 @@ export class SelectGizmoTool implements Tool {
 
       if (this.dragHandle === 'move' && app.settings.autoStackSnap && !isBase) {
         const wf = d.getShapeWorldFootprint(s);
-        s.zPx = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, this.targetLayer.id);
+        const topZ = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, this.targetLayer.id);
+        s.zPx = computeZPxForTargetMinZ(s, topZ);
       }
     }
 
@@ -476,28 +589,90 @@ export class SelectGizmoTool implements Tool {
     const l = d.layer;
     if (!l || l.kind !== 'shape' || !l.shape || !l.visible) return;
     const s = l.shape;
-    const { vb, originX, originY, topCenter, zLiftHandle, edgeUMin, edgeUMax, edgeVMin, edgeVMax } =
+    const { vb, originX, originY, topCenter, zLiftHandle, edgeUMin, edgeUMax, edgeVMin, edgeVMax, tilt } =
       this.getGizmoPoints(l);
 
-    ctx.save();
-    // Bottom diamond
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 3]);
-    const botPts = drawScreenDiamond(ctx, toScreen, vb.u, vb.v, vb.sizeU, vb.sizeV, s.zPx, originX, originY);
-    ctx.stroke();
+    const isTilted = Boolean(tilt);
+    const toLocalPt3 = (lu: number, lv: number, z: number) =>
+      tilt
+        ? transformLocalPointWithTilt(lu, lv, z, tilt)
+        : transformLocalToViewPoint(lu, lv, z, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
 
-    if (s.shapeType !== 'theotown_base' && s.heightPx > 0) {
-      ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
-      const topPts = drawScreenDiamond(ctx, toScreen, vb.u, vb.v, vb.sizeU, vb.sizeV, s.zPx + s.heightPx, originX, originY);
+    ctx.save();
+    if (tilt) {
+      // Faint upright anchor reference diamond at zPx
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.30)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      drawScreenDiamond(ctx, toScreen, vb.u, vb.v, vb.sizeU, vb.sizeV, s.zPx, originX, originY);
       ctx.stroke();
 
+      // Actual tilted 3D wireframe bounding box
+      const z0 = Math.round(s.zPx);
+      const z1 = z0 + Math.round(s.heightPx);
+      const localCorners: [number, number][] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+      const projLoop = (zVal: number) =>
+        localCorners.map(([lu, lv]) => {
+          const p3 = transformLocalPointWithTilt(lu, lv, zVal, tilt);
+          return toScreen(...isoToScreenPx(p3.x, p3.y, p3.z, originX, originY));
+        });
+      const tBot = projLoop(z0);
+      const tTop = projLoop(z1);
+
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.90)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
       ctx.beginPath();
       for (let i = 0; i < 4; i++) {
-        ctx.moveTo(botPts[i][0], botPts[i][1]);
-        ctx.lineTo(topPts[i][0], topPts[i][1]);
+        if (i === 0) ctx.moveTo(tBot[i][0], tBot[i][1]);
+        else ctx.lineTo(tBot[i][0], tBot[i][1]);
+      }
+      ctx.closePath();
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.90)';
+      ctx.beginPath();
+      for (let i = 0; i < 4; i++) {
+        if (i === 0) ctx.moveTo(tTop[i][0], tTop[i][1]);
+        else ctx.lineTo(tTop[i][0], tTop[i][1]);
+      }
+      ctx.closePath();
+      for (let i = 0; i < 4; i++) {
+        ctx.moveTo(tBot[i][0], tBot[i][1]);
+        ctx.lineTo(tTop[i][0], tTop[i][1]);
       }
       ctx.stroke();
+
+      // Tilt pivot indicator
+      ctx.setLineDash([]);
+      const [pvx, pvy] = toScreen(...isoToScreenPx(tilt.cuView, tilt.cvView, tilt.czOut, originX, originY));
+      ctx.fillStyle = '#f472b6';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      ctx.arc(pvx, pvy, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      // Bottom diamond
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      const botPts = drawScreenDiamond(ctx, toScreen, vb.u, vb.v, vb.sizeU, vb.sizeV, s.zPx, originX, originY);
+      ctx.stroke();
+
+      if (s.shapeType !== 'theotown_base' && s.heightPx > 0) {
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+        const topPts = drawScreenDiamond(ctx, toScreen, vb.u, vb.v, vb.sizeU, vb.sizeV, s.zPx + s.heightPx, originX, originY);
+        ctx.stroke();
+
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          ctx.moveTo(botPts[i][0], botPts[i][1]);
+          ctx.lineTo(topPts[i][0], topPts[i][1]);
+        }
+        ctx.stroke();
+      }
     }
     ctx.setLineDash([]);
 
@@ -532,11 +707,14 @@ export class SelectGizmoTool implements Tool {
     if (s.shapeType !== 'theotown_base') {
       drawDot(topCenter, '#fbbf24', 5.5, true);
       const [hx, hy] = toScreen(topCenter[0], topCenter[1]);
+      const tiltSuffix = isTilted
+        ? ` · 倾角 U:${normalizeTiltDeg(s.tiltUDeg)}° V:${normalizeTiltDeg(s.tiltVDeg)}°`
+        : '';
       drawBadge(
         ctx,
         hx,
         hy - 18,
-        `${s.sizeU}×${s.sizeV}格 (${cellsToMeters(s.sizeU).toFixed(1)}×${cellsToMeters(s.sizeV).toFixed(1)}m) · H ${s.heightPx}px (${zPxToMeters(s.heightPx).toFixed(2)}m)`,
+        `${s.sizeU}×${s.sizeV}格 (${cellsToMeters(s.sizeU).toFixed(1)}×${cellsToMeters(s.sizeV).toFixed(1)}m) · H ${s.heightPx}px (${zPxToMeters(s.heightPx).toFixed(2)}m)${tiltSuffix}`,
         'rgba(20, 16, 36, 0.92)',
         '#fbbf24',
       );
@@ -569,7 +747,7 @@ export class SelectGizmoTool implements Tool {
         if (pts.length >= 3) {
           ctx.beginPath();
           for (let i = 0; i < pts.length; i++) {
-            const pt3 = transformLocalToViewPoint(pts[i][0], pts[i][1], zSec, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+            const pt3 = toLocalPt3(pts[i][0], pts[i][1], zSec);
             const iso = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
             const sc = toScreen(iso[0], iso[1]);
             if (i === 0) ctx.moveTo(sc[0], sc[1]);
@@ -588,7 +766,7 @@ export class SelectGizmoTool implements Tool {
           if (inPts.length >= 3) {
             ctx.beginPath();
             for (let i = 0; i < inPts.length; i++) {
-              const pt3 = transformLocalToViewPoint(inPts[i][0], inPts[i][1], zSec, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+              const pt3 = toLocalPt3(inPts[i][0], inPts[i][1], zSec);
               const iso = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
               const sc = toScreen(iso[0], iso[1]);
               if (i === 0) ctx.moveTo(sc[0], sc[1]);
@@ -636,7 +814,7 @@ export class SelectGizmoTool implements Tool {
         if (pts.length >= 3) {
           ctx.beginPath();
           for (let i = 0; i < pts.length; i++) {
-            const pt3 = transformLocalToViewPoint(pts[i][0], pts[i][1], zSec, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+            const pt3 = toLocalPt3(pts[i][0], pts[i][1], zSec);
             const iso = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
             const sc = toScreen(iso[0], iso[1]);
             if (i === 0) ctx.moveTo(sc[0], sc[1]);
@@ -655,8 +833,8 @@ export class SelectGizmoTool implements Tool {
               if (!sec.edges[ei].locked) continue;
               const aPt = pts[ei];
               const bPt = pts[(ei + 1) % nE];
-              const p3a = transformLocalToViewPoint(aPt[0], aPt[1], zSec, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
-              const p3b = transformLocalToViewPoint(bPt[0], bPt[1], zSec, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+              const p3a = toLocalPt3(aPt[0], aPt[1], zSec);
+              const p3b = toLocalPt3(bPt[0], bPt[1], zSec);
               const sa = toScreen(...isoToScreenPx(p3a.x, p3a.y, p3a.z, originX, originY));
               const sb = toScreen(...isoToScreenPx(p3b.x, p3b.y, p3b.z, originX, originY));
               ctx.beginPath();
@@ -716,7 +894,7 @@ export class SelectGizmoTool implements Tool {
         for (let i = 0; i < cs.poly.length; i++) {
           const [ps, ph] = cs.poly[i];
           const hUse = s.flipZ ? 1 - ph : ph;
-          const pt3 = transformLocalToViewPoint(ps, lv, z0 + hUse * heightPx, vb.u, vb.v, vb.sizeU, vb.sizeV, vb.ori);
+          const pt3 = toLocalPt3(ps, lv, z0 + hUse * heightPx);
           const iso = isoToScreenPx(pt3.x, pt3.y, pt3.z, originX, originY);
           const sc = toScreen(iso[0], iso[1]);
           if (i === 0) ctx.moveTo(sc[0], sc[1]);
@@ -883,9 +1061,18 @@ export class CreateShapeTool implements Tool {
     shape.sizeU = shape.shapeType === 'theotown_base' ? Math.max(1, Math.round(wb.sizeU)) : wb.sizeU;
     shape.sizeV = shape.shapeType === 'theotown_base' ? Math.max(1, Math.round(wb.sizeV)) : wb.sizeV;
     shape.ori = wb.ori;
-    shape.zPx = app.settings.autoStackSnap && shape.shapeType !== 'theotown_base'
-      ? d.getTopElevationAt(shape.u, shape.v, shape.sizeU, shape.sizeV)
-      : this.baseZ;
+    if (app.settings.autoStackSnap && shape.shapeType !== 'theotown_base') {
+      const wf = d.getShapeWorldFootprint(shape);
+      const topZ = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0);
+      shape.zPx = computeZPxForTargetMinZ(shape, topZ);
+    } else {
+      shape.zPx = this.baseZ;
+      if (hasActiveTilt(shape) && app.settings.keepGroundedOnTilt && shape.shapeType !== 'theotown_base') {
+        if (this.baseZ === 0 || getShapeTiltedZRange(shape).minZ < 0) {
+          shape.zPx = computeZPxForTargetMinZ(shape, 0);
+        }
+      }
+    }
 
     const created = app.addShapeLayer(shape);
     this.host.toast(`✨ 已生成「${created.name}」(${shape.sizeU}×${shape.sizeV}格 · H ${shape.heightPx}px)`);
@@ -914,9 +1101,18 @@ export class CreateShapeTool implements Tool {
     previewShape.sizeU = previewShape.shapeType === 'theotown_base' ? Math.max(1, Math.round(wb.sizeU)) : wb.sizeU;
     previewShape.sizeV = previewShape.shapeType === 'theotown_base' ? Math.max(1, Math.round(wb.sizeV)) : wb.sizeV;
     previewShape.ori = wb.ori;
-    previewShape.zPx = app.settings.autoStackSnap && previewShape.shapeType !== 'theotown_base'
-      ? d.getTopElevationAt(wb.u, wb.v, wb.sizeU, wb.sizeV)
-      : 0;
+    if (app.settings.autoStackSnap && previewShape.shapeType !== 'theotown_base') {
+      const wf = d.getShapeWorldFootprint(previewShape);
+      const topZ = d.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0);
+      previewShape.zPx = computeZPxForTargetMinZ(previewShape, topZ);
+    } else {
+      previewShape.zPx = 0;
+      if (hasActiveTilt(previewShape) && app.settings.keepGroundedOnTilt && previewShape.shapeType !== 'theotown_base') {
+        if (getShapeTiltedZRange(previewShape).minZ < 0) {
+          previewShape.zPx = computeZPxForTargetMinZ(previewShape, 0);
+        }
+      }
+    }
 
     if (!this.previewCanvas) this.previewCanvas = document.createElement('canvas');
     if (this.previewCanvas.width !== d.width || this.previewCanvas.height !== d.height) {

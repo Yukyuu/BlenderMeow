@@ -51,8 +51,13 @@ import {
 import {
   clampShadeContrast,
   cloneShape,
+  computeZPxForTargetMinZ,
   createDefaultShape,
   getPlanarFaceScreenOverlay,
+  getShapeTiltedViewBounds,
+  getShapeTiltedZRange,
+  hasActiveTilt,
+  normalizeTiltDeg,
   renderShapeToBuffer,
   SHAPE_LABELS,
   type FacadePatternType,
@@ -154,6 +159,7 @@ import {
   getTextureLibrary,
   getTextureLibraryByGroup,
   hydratePersistedTextureGroups,
+  sanitizeFaceTexturesForShape,
   isPlanarTextureShape,
   makeTextureAssetFromRgba,
   removeTextureAsset,
@@ -4788,8 +4794,8 @@ function testV145I18nAndBrandMetadata() {
   assert.ok(MIT_LICENSE_TEXT.includes('yukyuu'), 'MIT_LICENSE_TEXT must credit yukyuu');
   assert.equal(PIXEL_MEOW_ONLINE_URL, 'https://pixelmeow.9rm.uk/', 'Pixel Meow Online URL must match');
   assert.equal(ANDROID_RELEASES_URL, 'https://github.com/Yukyuu/BlenderMeow/releases/', 'Android Releases URL must match');
-  assert.equal(APP_VERSION, '1.4.7', 'APP_VERSION must be 1.4.7');
-  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.4.7', 'Latest changelog entry must be 1.4.7');
+  assert.equal(APP_VERSION, '1.5.1', 'APP_VERSION must be 1.5.1');
+  assert.equal(CHANGELOG_ENTRIES[0]?.version, '1.5.1', 'Latest changelog entry must be 1.5.1');
 
   const licenseFile = fs.readFileSync(path.resolve(process.cwd(), 'LICENSE'), 'utf8');
   assert.ok(licenseFile.includes('MIT License') && licenseFile.includes('yukyuu'), 'Root LICENSE file must contain MIT License and yukyuu');
@@ -5235,6 +5241,586 @@ async function testV147Features() {
   console.log('PASS: v1.4.7 features (Sphere/Ellipsoid tool, vertical flip across all shapes, Ground Projection, custom built-in Grid Color picker & Android Releases link)');
 }
 
+async function testV150VerticalTiltRotation() {
+  const CJK_RE = /[\u4e00-\u9fff]/;
+
+  // 1. Normalization & base stripping
+  assert.equal(normalizeTiltDeg(0), 0);
+  assert.equal(normalizeTiltDeg(360), 0);
+  assert.equal(normalizeTiltDeg(-360), 0);
+  assert.equal(normalizeTiltDeg(-180), 180);
+  assert.equal(normalizeTiltDeg(270), -90);
+  assert.equal(normalizeTiltDeg(90), 90);
+  const baseWithTilt = createDefaultShape('theotown_base', { tiltUDeg: 45, tiltVDeg: 30, tiltPivot: 'bottom' });
+  assert.equal(baseWithTilt.tiltUDeg, undefined, 'theotown_base must strip tiltUDeg');
+  assert.equal(baseWithTilt.tiltVDeg, undefined, 'theotown_base must strip tiltVDeg');
+  assert.equal(baseWithTilt.tiltPivot, undefined, 'theotown_base must strip tiltPivot');
+  assert.equal(hasActiveTilt(baseWithTilt), false);
+
+  // 2. Metric rigid-body invariance: 1x1x54px (3 cells tall) box & cylinder laid flat at 90deg become ~3 cells long x 18px tall
+  for (const kind of ['box', 'cylinder'] as const) {
+    const flatShape = createDefaultShape(kind, {
+      u: 2,
+      v: 1,
+      zPx: 20,
+      sizeU: 1,
+      sizeV: 1,
+      heightPx: 54,
+      tiltUDeg: 90,
+      tiltPivot: 'center',
+    });
+    const tb = getShapeTiltedViewBounds(flatShape, 5, 3, 0);
+    const spanU = tb.maxU - tb.minU;
+    const spanV = tb.maxV - tb.minV;
+    const spanZ = tb.maxZ - tb.minZ;
+    assert.ok(Math.abs(spanU - 3.0) < 0.08, `${kind} laid flat 90deg along U-Z must span ~3.0 cells in U (got ${spanU.toFixed(3)})`);
+    assert.ok(Math.abs(spanV - 1.0) < 0.08, `${kind} laid flat 90deg along U-Z must span ~1.0 cells in V (got ${spanV.toFixed(3)})`);
+    assert.ok(Math.abs(spanZ - 18.0) < 0.5, `${kind} laid flat 90deg along U-Z must span ~18px in Z (got ${spanZ.toFixed(2)})`);
+  }
+
+  // 3. Snap bottom to ground helper exactness
+  const leanTower = createDefaultShape('box', {
+    u: 1.5,
+    v: 1,
+    zPx: 0,
+    sizeU: 1,
+    sizeV: 1,
+    heightPx: 36,
+    tiltUDeg: 45,
+    tiltPivot: 'center',
+  });
+  const beforeRange = getShapeTiltedZRange(leanTower);
+  assert.ok(beforeRange.minZ < 0, `Center-pivoted tilted tower at zPx=0 should dip below 0 (got ${beforeRange.minZ.toFixed(2)})`);
+  leanTower.zPx = Math.max(0, Math.ceil(leanTower.zPx - beforeRange.minZ - 1e-4));
+  const afterRange = getShapeTiltedZRange(leanTower);
+  assert.ok(afterRange.minZ >= -0.05 && afterRange.minZ <= 1.05, `After snap-to-ground minZ should be in [0, 1] (got ${afterRange.minZ.toFixed(2)})`);
+
+  // 4. All 11 3D shape types + multi-section columns tilted (35deg, 90deg flat, combined U+V, bottom pivot, flipZ + tilt)
+  const tiltCases: Array<{
+    name: string;
+    shape: ReturnType<typeof createDefaultShape>;
+  }> = [
+    { name: 'box_45', shape: createDefaultShape('box', { u: 1.5, v: 1, zPx: 14, sizeU: 1.5, sizeV: 1, heightPx: 30, tiltUDeg: 45 }) },
+    { name: 'box_flat90', shape: createDefaultShape('box', { u: 2, v: 1, zPx: 18, sizeU: 1, sizeV: 1, heightPx: 36, tiltUDeg: 90, pattern: { type: 'windows', primaryColor: { r: 80, g: 180, b: 245, a: 255 }, rows: 2, cols: 2, spacingPx: 2, marginPx: 2, applyTop: false } }) },
+    { name: 'tri_vert_uv', shape: createDefaultShape('right_tri_prism', { u: 1.5, v: 1, zPx: 16, sizeU: 1.5, sizeV: 1, heightPx: 28, triPrismCut: 'vertical', tiltUDeg: 35, tiltVDeg: -25 }) },
+    { name: 'prism_flat', shape: createDefaultShape('prism', { u: 2, v: 1, zPx: 18, sizeU: 1, sizeV: 1, heightPx: 36, prismSides: 6, tiltVDeg: 90 }) },
+    { name: 'wedge_ramp_tilt', shape: createDefaultShape('wedge', { u: 1.5, v: 1, zPx: 16, sizeU: 1.5, sizeV: 1, heightPx: 26, wedgeMode: 'ramp', tiltUDeg: -50, tiltPivot: 'bottom' }) },
+    { name: 'wedge_gable_flat', shape: createDefaultShape('wedge', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 24, wedgeMode: 'gable', tiltVDeg: 90 }) },
+    { name: 'pyramid_tilt135', shape: createDefaultShape('pyramid', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1.5, heightPx: 28, tiltUDeg: 135 }) },
+    { name: 'cylinder_flat90', shape: createDefaultShape('cylinder', { u: 2, v: 1, zPx: 18, sizeU: 1, sizeV: 1, heightPx: 36, tiltUDeg: 90 }) },
+    { name: 'cylinder_tilt_uv', shape: createDefaultShape('cylinder', { u: 1.5, v: 1, zPx: 18, sizeU: 1.25, sizeV: 0.75, heightPx: 32, tiltUDeg: 40, tiltVDeg: 30, tiltPivot: 'bottom' }) },
+    { name: 'cone_tilt60', shape: createDefaultShape('cone', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 30, tiltUDeg: 60, tiltVDeg: -20 }) },
+    { name: 'cone_flip_flat', shape: createDefaultShape('cone', { u: 1.5, v: 1, zPx: 18, sizeU: 1.25, sizeV: 1.25, heightPx: 28, flipZ: true, tiltVDeg: 90 }) },
+    { name: 'dome_tilt110', shape: createDefaultShape('dome', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 26, domeMode: 'dome', tiltUDeg: 110 }) },
+    { name: 'sphere_tilt45', shape: createDefaultShape('sphere', { u: 1.5, v: 1, zPx: 18, sizeU: 1.75, sizeV: 1, heightPx: 28, tiltUDeg: 45, tiltVDeg: 25 }) },
+    { name: 'arch_hollow_tilt', shape: createDefaultShape('arch', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 28, archHollow: true, archHollowStyle: 'shell', tiltUDeg: 45, tiltVDeg: -20 }) },
+    { name: 'arch_portal_flat', shape: createDefaultShape('arch', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 26, archHollow: true, archHollowStyle: 'portal', tiltVDeg: 90 }) },
+    {
+      name: 'loft_hollow_tilt',
+      shape: createDefaultShape('loft', {
+        u: 1.5,
+        v: 1,
+        zPx: 18,
+        sizeU: 1.5,
+        sizeV: 1.25,
+        heightPx: 30,
+        loftHollow: true,
+        loftFloorT: 0.25,
+        tiltUDeg: 55,
+        tiltVDeg: 15,
+        loftSections: [
+          { id: 't0', name: 'Bot', t: 0, scale: 1.0, twistDeg: 0, offsetU: 0, offsetV: 0, nodes: createLoftPresetNodes('square') },
+          { id: 't1', name: 'Top', t: 1, scale: 0.65, twistDeg: 15, offsetU: 0, offsetV: 0, nodes: createLoftPresetNodes('circle') },
+        ],
+      }),
+    },
+    {
+      name: 'col_box_tilt',
+      shape: (() => {
+        const s = createDefaultShape('box', { u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 30, tiltUDeg: 50 });
+        const secs = ensureColumnSections(s);
+        applyColumnSectionTransform(secs[1], { scale: 0.6 });
+        return s;
+      })(),
+    },
+  ];
+
+  for (const tc of tiltCases) {
+    // Non-square 5x3 plot to prove strict 4x90deg closure under arbitrary tilt!
+    const upDoc = new BuilderDocument(288, 256, 5, 3, 16);
+    const upShape = cloneShape(tc.shape);
+    delete upShape.tiltUDeg;
+    delete upShape.tiltVDeg;
+    const upLayer = new BuilderLayer(288, 256, `${tc.name}_up`, 'shape', upShape);
+    upDoc.layers.push(upLayer);
+    upDoc.rerenderAllShapes();
+
+    const tDoc = new BuilderDocument(288, 256, 5, 3, 16);
+    tDoc.groundShadow.enabled = true;
+    tDoc.groundShadow.interBlockEnabled = true;
+    const tLayer = new BuilderLayer(288, 256, tc.name, 'shape', cloneShape(tc.shape));
+    tDoc.layers.push(tLayer);
+    tDoc.rerenderAllShapes();
+
+    const stats = countPixels(tLayer.data);
+    assert.ok(stats.solid > 100, `Tilted ${tc.name} must render solid pixels (got ${stats.solid})`);
+    assert.equal(stats.semiTransparent, 0, `Tilted ${tc.name} must have 0 AA pixels`);
+    assert.ok(!buffersEqual(tLayer.data, upLayer.data), `Tilted ${tc.name} must visually differ from upright`);
+
+    // Ground shadow mask must exist and differ from upright
+    const { originX: ox, originY: oy } = tDoc.getViewOrigin();
+    const mUp = new Uint8Array(288 * 256);
+    const mTilted = new Uint8Array(288 * 256);
+    renderShapeGroundShadowMask(mUp, 288, 256, upShape, tDoc.plotU, tDoc.plotV, 0, ox, oy);
+    renderShapeGroundShadowMask(mTilted, 288, 256, tc.shape, tDoc.plotU, tDoc.plotV, 0, ox, oy);
+    let shPx = 0;
+    let diffShPx = 0;
+    for (let i = 0; i < mTilted.length; i++) {
+      if (mTilted[i]) shPx++;
+      if (mTilted[i] !== mUp[i]) diffShPx++;
+    }
+    assert.ok(shPx > 50, `Tilted ${tc.name} must cast ground shadow (got ${shPx})`);
+    assert.ok(diffShPx > 20, `Tilted ${tc.name} ground shadow must reflect tilted geometry (diff=${diffShPx})`);
+
+    // 4x90deg pixel-for-pixel rotation closure on non-square 5x3 plot (with ground + inter-block shadows enabled!)
+    const buf0 = tDoc.renderToBuffer();
+    for (let r = 1; r <= 4; r++) {
+      tDoc.rotateView(1);
+      const layerR = tDoc.layers[0];
+      assert.equal(countPixels(layerR.data).semiTransparent, 0, `Tilted ${tc.name} rot ${r * 90}deg 0 AA`);
+    }
+    assert.ok(buffersEqual(tDoc.renderToBuffer(), buf0), `Tilted ${tc.name} must close pixel-for-pixel after 4x90deg rotations`);
+
+    // .bmeow serialize/deserialize round-trip
+    const json = serializeBmeowProject(tDoc, `Tilt_${tc.name}`);
+    const { doc: restored } = await deserializeBmeowProject(json);
+    assert.equal(restored.layers[0]?.shape?.tiltUDeg, tc.shape.tiltUDeg);
+    assert.equal(restored.layers[0]?.shape?.tiltVDeg, tc.shape.tiltVDeg);
+    assert.equal(restored.layers[0]?.shape?.tiltPivot, tc.shape.tiltPivot);
+    assert.ok(buffersEqual(restored.renderToBuffer(), buf0), `Restored tilted ${tc.name} must match bit-for-bit`);
+  }
+
+  // 5. Tilted planar face 'bottom' exposed & visible when tilted toward camera (-135deg / 180deg), back-facing at +135deg
+  const tiltedBoxFront = createDefaultShape('box', { u: 1, v: 1, zPx: 16, sizeU: 1.5, sizeV: 1.5, heightPx: 24, tiltUDeg: -135 });
+  const tiltedFaces = getPlanarFacesForShape(tiltedBoxFront);
+  assert.ok(tiltedFaces.some((f) => f.id === 'bottom'), 'Tilted box must expose bottom planar face');
+  const botOvFront = getPlanarFaceScreenOverlay(tiltedBoxFront, 'bottom', 4, 4, 0, 128, 128);
+  assert.ok(botOvFront && botOvFront.visible, 'Box tilted -135deg must have visible bottom planar face');
+  const tiltedBoxBack = createDefaultShape('box', { u: 1, v: 1, zPx: 16, sizeU: 1.5, sizeV: 1.5, heightPx: 24, tiltUDeg: 135 });
+  const botOvBack = getPlanarFaceScreenOverlay(tiltedBoxBack, 'bottom', 4, 4, 0, 128, 128);
+  assert.ok(botOvBack && !botOvBack.visible, 'Box tilted +135deg has bottom normal (-0.707,0,+0.707) back-facing camera (18,18,16)');
+
+  // 6. Inter-block cast shadow from a tilted overhanging cylinder onto a flat receiver pad on the right
+  const ibDoc = new BuilderDocument(256, 256, 4, 4, 16);
+  ibDoc.groundShadow.enabled = true;
+  ibDoc.groundShadow.interBlockEnabled = true;
+  const pad = createDefaultShape('box', { u: 0.5, v: 0.5, zPx: 0, sizeU: 3, sizeV: 3, heightPx: 8, baseColor: { r: 200, g: 200, b: 200, a: 255 } });
+  const tiltedPole = createDefaultShape('cylinder', { u: 0.5, v: 1.5, zPx: 26, sizeU: 0.75, sizeV: 0.75, heightPx: 36, tiltUDeg: 75 });
+  ibDoc.layers.push(
+    new BuilderLayer(256, 256, 'Pad', 'shape', pad),
+    new BuilderLayer(256, 256, 'TiltedPole', 'shape', tiltedPole),
+  );
+  ibDoc.sortLayersByIsoDepth();
+  ibDoc.rerenderAllShapes();
+  const withIb = ibDoc.renderToBuffer();
+  ibDoc.groundShadow.interBlockEnabled = false;
+  const withoutIb = ibDoc.renderToBuffer();
+  assert.ok(!buffersEqual(withIb, withoutIb), 'Tilted cylinder must cast visible inter-block shadow onto lower pad');
+
+  // 7. MCP upsert_shape & getStudioState support tiltUDeg / tiltVDeg / tiltPivot
+  const mcpApp = new App();
+  mcpApp.newDocument(192, 192, 4, 4, 'V150Mcp', false, true);
+  const mcpCtx = { app: mcpApp, refreshAll: () => {}, fitView: () => {}, requestRender: () => {} };
+  await executeAiStudioCommand(mcpCtx, {
+    kind: 'upsert_shape',
+    mode: 'create',
+    name: 'HorizontalPipe',
+    shapeType: 'cylinder',
+    u: 1,
+    v: 1,
+    sizeU: 0.75,
+    sizeV: 0.75,
+    zPx: 14,
+    heightPx: 36,
+    tiltUDeg: 90,
+    tiltVDeg: 15,
+    tiltPivot: 'bottom',
+  });
+  const st = getStudioState(mcpApp);
+  const pipeL = st.layers.find((l) => l.name === 'HorizontalPipe');
+  assert.equal(pipeL?.shape?.tiltUDeg, 90);
+  assert.equal(pipeL?.shape?.tiltVDeg, 15);
+  assert.equal(pipeL?.shape?.tiltPivot, 'bottom');
+
+  // 8. v1.5.0 English i18n zero-CJK check
+  try {
+    setLanguageSetting('en');
+    const v150Samples = [
+      '底面 (-Z)',
+      '三角底面 (-Z)',
+      '竖直平面倾斜旋转（Z 轴倾角）',
+      'U-Z 倾角 (°)',
+      'V-Z 倾角 (°)',
+      '调整 U-Z 倾斜角度',
+      '调整 V-Z 倾斜角度',
+      '复位倾斜角度',
+      'U-Z 倾斜 45°',
+      '沿 U-Z 放平 90°',
+      '沿 V-Z 放平 90°',
+      '0° 复位',
+      'U +90° 放平',
+      'V +90° 放平',
+      '自动调整离地高度 Z，使倾斜后形体的最低点刚好贴齐地面 (Z = 0)',
+      '倾斜底部贴齐地面',
+      '⬇ 底部贴地',
+      '⬇ 已将倾斜底部贴齐地面 (Z = 12px)',
+      '旋转支点',
+      '几何中心 (默认)',
+      '底面中心 (基座固定)',
+      '修改倾斜旋转支点',
+      '可在 -180°~180° 内沿竖直平面任意倾斜或放平（±90° 即水平躺卧），旋转严格保持 TheoTown 物理比例。',
+      '清除当前图形的竖直倾斜角度，恢复直立状态',
+      '将当前选中图形沿 U-Z 平面旋转 90° 水平放平',
+      '📐 已清除倾角，恢复直立状态',
+      '📐 已将当前图形沿 U-Z 平面放平 90°',
+      '📐 复位倾角',
+      '📐 放平 90°',
+      '1×1格 (9.6×9.6m) · H 36px (19.20m) · 倾角 U:90° V:0°',
+      '地面投影 · U:1.5 V:2 · 离地 -4px (-2.13m)',
+    ];
+    for (const s of v150Samples) {
+      const out = tr(s);
+      assert.ok(!CJK_RE.test(out), `[v1.5.0 en i18n] CJK leaked: "${s}" -> "${out}"`);
+    }
+    assert.equal(
+      tr('1×1格 (9.6×9.6m) · H 36px (19.20m) · 倾角 U:90° V:0°'),
+      '1×1c (9.6×9.6m) · H 36px (19.20m) · Tilt U:90° V:0°',
+    );
+    assert.equal(
+      tr('⬇ 已将倾斜底部贴齐地面 (Z = 12px)'),
+      '⬇ Snapped tilted bottom to ground (Z = 12px)',
+    );
+  } finally {
+    setLanguageSetting('zh');
+  }
+
+  console.log('PASS: v1.5.0 vertical-plane tilt rotation (all 11 3D primitives + multi-section columns, 90deg lay-flat metric scale, 0-AA, shadows, 4x90deg closure, .bmeow, MCP & i18n)');
+}
+
+async function testOpusV150ReviewFixes() {
+  const CJK_RE = /[\u4e00-\u9fff]/;
+
+  // 1. H1: Exact tilted stacking (flat 90deg center-pivot & 30deg leaning on a 10px slab + snap to Z=0)
+  const flatBox = createDefaultShape('box', {
+    u: 1, v: 1, zPx: 0, sizeU: 1, sizeV: 1, heightPx: 36, tiltUDeg: 90, tiltPivot: 'center',
+  });
+  flatBox.zPx = computeZPxForTargetMinZ(flatBox, 0);
+  assert.equal(flatBox.zPx, -9, 'H1: 90deg flat 1x1x36 center-pivot box snapped to ground must have zPx=-9');
+  assert.ok(Math.abs(getShapeTiltedZRange(flatBox).minZ) < 1e-4, 'H1: snapped flat box minZ must be 0');
+  const flatDoc = new BuilderDocument(192, 192, 4, 4, 16);
+  flatDoc.layers.push(new BuilderLayer(192, 192, 'FlatGround', 'shape', flatBox));
+  flatDoc.rerenderAllShapes();
+  assert.ok(countPixels(flatDoc.layers[0].data).solid > 100, 'H1: negative-zPx grounded flat box must render solid pixels');
+  assert.equal(countPixels(flatDoc.layers[0].data).semiTransparent, 0, 'H1: negative-zPx grounded flat box 0-AA');
+  const flatShadow = new Uint8Array(192 * 192);
+  const { originX: fox, originY: foy } = flatDoc.getViewOrigin();
+  renderShapeGroundShadowMask(flatShadow, 192, 192, flatBox, 4, 4, 0, fox, foy);
+  assert.ok(flatShadow.reduce((a, b) => a + b, 0) > 50, 'H1: negative-zPx grounded flat box must cast ground shadow');
+
+  const stackApp = new App();
+  assert.equal(stackApp.settings.keepGroundedOnTilt, true, 'M2: keepGroundedOnTilt must default to true');
+  stackApp.newDocument(256, 256, 5, 5, 'V151Stack', false, true);
+  const stackCtx = { app: stackApp, refreshAll: () => {}, fitView: () => {}, requestRender: () => {} };
+  await executeAiStudioCommand(stackCtx, {
+    kind: 'upsert_shape', mode: 'create', name: 'Slab', shapeType: 'box',
+    u: 1, v: 1, sizeU: 3, sizeV: 3, zPx: 0, heightPx: 10,
+  });
+  await executeAiStudioCommand(stackCtx, {
+    kind: 'upsert_shape', mode: 'create', name: 'FlatOnSlab', shapeType: 'box',
+    u: 2, v: 2, sizeU: 1, sizeV: 1, heightPx: 36, tiltUDeg: 90, tiltPivot: 'center', stackOnBelow: true,
+  });
+  await executeAiStudioCommand(stackCtx, {
+    kind: 'upsert_shape', mode: 'create', name: 'Lean30OnSlab', shapeType: 'box',
+    u: 1.25, v: 1, sizeU: 1, sizeV: 1, heightPx: 24, tiltUDeg: 30, tiltPivot: 'center', stackOnBelow: true,
+  });
+  await executeAiStudioCommand(stackCtx, {
+    kind: 'upsert_shape', mode: 'create', name: 'Lean30OnFlat', shapeType: 'box',
+    u: 2, v: 2, sizeU: 1, sizeV: 1, heightPx: 24, tiltUDeg: 30, tiltPivot: 'center', stackOnBelow: true,
+  });
+  const flatOnSlabLayer = stackApp.doc.layers.find((l) => l.name === 'FlatOnSlab')!;
+  const lean30Layer = stackApp.doc.layers.find((l) => l.name === 'Lean30OnSlab')!;
+  const leanOnFlatLayer = stackApp.doc.layers.find((l) => l.name === 'Lean30OnFlat')!;
+  const flatMinZ = getShapeTiltedZRange(flatOnSlabLayer.shape!).minZ;
+  const leanMinZ = getShapeTiltedZRange(lean30Layer.shape!).minZ;
+  const leanOnFlatMinZ = getShapeTiltedZRange(leanOnFlatLayer.shape!).minZ;
+  assert.ok(flatMinZ >= 9.99 && flatMinZ <= 10.5, `H1: FlatOnSlab must sit flush on Z=10 (got minZ=${flatMinZ.toFixed(2)}, zPx=${flatOnSlabLayer.shape!.zPx})`);
+  assert.ok(leanMinZ >= 9.99 && leanMinZ <= 11.05, `H1: Lean30OnSlab must sit flush on Z=10 (got minZ=${leanMinZ.toFixed(2)}, zPx=${lean30Layer.shape!.zPx})`);
+  assert.ok(leanOnFlatMinZ >= 27.99 && leanOnFlatMinZ <= 29.05, `H1: Lean30OnFlat must sit flush on top of FlatOnSlab Z=28 (got minZ=${leanOnFlatMinZ.toFixed(2)})`);
+
+  // Also test layer_action stack_on_below on an existing tilted layer
+  lean30Layer.shape!.zPx = 0;
+  await executeAiStudioCommand(stackCtx, { kind: 'layer_action', action: 'stack_on_below', layerId: lean30Layer.id });
+  const leanMinZ2 = getShapeTiltedZRange(lean30Layer.shape!).minZ;
+  assert.ok(leanMinZ2 >= 9.99 && leanMinZ2 <= 11.05, `H1: layer_action stack_on_below must align tilted minZ (got ${leanMinZ2.toFixed(2)})`);
+
+  // 2. M1: 'bottom' pivot keeps lowest point strictly flush at zPx across all shape types & angles + 4x90deg closure
+  const bottomPivotCases: Array<{ name: string; shape: ReturnType<typeof createDefaultShape> }> = [
+    { name: 'box_30', shape: createDefaultShape('box', { u: 1.5, v: 1, zPx: 0, sizeU: 1, sizeV: 1, heightPx: 24, tiltUDeg: 30, tiltPivot: 'bottom' }) },
+    { name: 'box_90', shape: createDefaultShape('box', { u: 1.5, v: 1, zPx: 12, sizeU: 1, sizeV: 1, heightPx: 36, tiltUDeg: 90, tiltPivot: 'bottom' }) },
+    { name: 'tri_v_45', shape: createDefaultShape('right_tri_prism', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 24, triPrismCut: 'vertical', tiltUDeg: 45, tiltVDeg: -25, tiltPivot: 'bottom' }) },
+    { name: 'prism_60', shape: createDefaultShape('prism', { u: 1.5, v: 1, zPx: 0, sizeU: 1.25, sizeV: 1.25, heightPx: 28, prismSides: 6, tiltUDeg: 60, tiltPivot: 'bottom' }) },
+    { name: 'wedge_gable', shape: createDefaultShape('wedge', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 24, wedgeMode: 'gable', tiltUDeg: 120, tiltPivot: 'bottom' }) },
+    { name: 'pyramid_135', shape: createDefaultShape('pyramid', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1.5, heightPx: 28, tiltUDeg: 135, tiltVDeg: 20, tiltPivot: 'bottom' }) },
+    { name: 'cyl_35', shape: createDefaultShape('cylinder', { u: 1.5, v: 1, zPx: 0, sizeU: 1.25, sizeV: 0.75, heightPx: 30, tiltUDeg: 35, tiltVDeg: -30, tiltPivot: 'bottom' }) },
+    { name: 'cone_140', shape: createDefaultShape('cone', { u: 1.5, v: 1, zPx: 0, sizeU: 1.25, sizeV: 1.25, heightPx: 28, tiltUDeg: 140, tiltPivot: 'bottom' }) },
+    { name: 'dome_115', shape: createDefaultShape('dome', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 24, domeMode: 'dome', tiltUDeg: 115, tiltVDeg: 20, tiltPivot: 'bottom' }) },
+    { name: 'sphere_45', shape: createDefaultShape('sphere', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 28, tiltUDeg: 45, tiltVDeg: 30, tiltPivot: 'bottom' }) },
+    { name: 'arch_135', shape: createDefaultShape('arch', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 26, archHollow: true, archHollowStyle: 'shell', tiltUDeg: 135, tiltPivot: 'bottom' }) },
+    { name: 'loft_55', shape: createDefaultShape('loft', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1.25, heightPx: 28, tiltUDeg: 55, tiltVDeg: -15, tiltPivot: 'bottom' }) },
+    {
+      name: 'col_box_50',
+      shape: (() => {
+        const s = createDefaultShape('box', { u: 1.5, v: 1, zPx: 0, sizeU: 1.5, sizeV: 1, heightPx: 28, tiltUDeg: 50, tiltPivot: 'bottom' });
+        const secs = ensureColumnSections(s);
+        applyColumnSectionTransform(secs[1], { scale: 0.6 });
+        return s;
+      })(),
+    },
+  ];
+  for (const bc of bottomPivotCases) {
+    const zr = getShapeTiltedZRange(bc.shape);
+    assert.ok(
+      Math.abs(zr.minZ - bc.shape.zPx) < 0.08,
+      `M1: bottom-pivot ${bc.name} must keep minZ flush at zPx=${bc.shape.zPx} (got minZ=${zr.minZ.toFixed(3)})`,
+    );
+    const d = new BuilderDocument(256, 256, 5, 3, 16);
+    d.groundShadow.enabled = true;
+    d.layers.push(new BuilderLayer(256, 256, bc.name, 'shape', cloneShape(bc.shape)));
+    d.rerenderAllShapes();
+    const b0 = d.renderToBuffer();
+    assert.ok(countPixels(d.layers[0].data).solid > 80, `M1: bottom-pivot ${bc.name} renders solid pixels`);
+    assert.equal(countPixels(d.layers[0].data).semiTransparent, 0, `M1: bottom-pivot ${bc.name} 0-AA`);
+    for (let r = 1; r <= 4; r++) d.rotateView(1);
+    assert.ok(buffersEqual(d.renderToBuffer(), b0), `M1: bottom-pivot ${bc.name} 4x90deg closure`);
+  }
+
+  // 3. M4: Bottom face texture survives returning tilt to 0° & re-tilting
+  const lib = getTextureLibrary();
+  assert.ok(lib.length > 0, 'Built-in texture library must be non-empty');
+  const texBox = createDefaultShape('box', {
+    u: 1, v: 1, zPx: 16, sizeU: 1.5, sizeV: 1.5, heightPx: 24, tiltUDeg: -135,
+    faceTextures: { bottom: { mode: 'stretch', assetId: lib[0].id, opacity: 1, shadeWithFace: true } },
+  });
+  const untexBox = cloneShape(texBox);
+  delete untexBox.faceTextures;
+  const dTex = new BuilderDocument(192, 192, 4, 4, 16);
+  dTex.layers.push(new BuilderLayer(192, 192, 'TexBot', 'shape', texBox));
+  dTex.rerenderAllShapes();
+  const renderedTexBefore = new Uint8ClampedArray(dTex.layers[0].data);
+  const dUntex = new BuilderDocument(192, 192, 4, 4, 16);
+  dUntex.layers.push(new BuilderLayer(192, 192, 'UntexBot', 'shape', untexBox));
+  dUntex.rerenderAllShapes();
+  assert.ok(!buffersEqual(renderedTexBefore, dUntex.layers[0].data), 'M4: bottom texture must visibly render at -135deg');
+  // Scrub tilt to 0° and sanitize
+  delete texBox.tiltUDeg;
+  delete texBox.tiltVDeg;
+  sanitizeFaceTexturesForShape(texBox);
+  assert.equal(texBox.faceTextures?.bottom?.mode, 'stretch', 'M4: bottom texture must be preserved when tilt resets to 0°');
+  // Re-tilt back to -135°
+  texBox.tiltUDeg = -135;
+  dTex.layers[0].shape = cloneShape(texBox);
+  dTex.rerenderAllShapes();
+  assert.ok(buffersEqual(dTex.layers[0].data, renderedTexBefore), 'M4: re-tilted bottom texture must match bit-for-bit');
+
+  // 4. L1: Tilted arch_hollow (U=135deg) has no flat-top highlight speckles across curved barrel
+  const archHi = createDefaultShape('arch', {
+    u: 1.5, v: 1, zPx: 18, sizeU: 1.5, sizeV: 1, heightPx: 26,
+    archHollow: true, archHollowStyle: 'shell', tiltUDeg: 135, edgeHighlight: true,
+  });
+  const archNoHi = cloneShape(archHi);
+  archNoHi.edgeHighlight = false;
+  const bufHi = new Uint8ClampedArray(220 * 220 * 4);
+  const bufNoHi = new Uint8ClampedArray(220 * 220 * 4);
+  renderShapeToBuffer(bufHi, 220, 220, archHi, 4, 4, 0, 110, 150);
+  renderShapeToBuffer(bufNoHi, 220, 220, archNoHi, 4, 4, 0, 110, 150);
+  assert.equal(countPixels(bufHi).semiTransparent, 0, 'L1: tilted arch_hollow 0-AA');
+  let hiDiffCount = 0;
+  for (let i = 0; i < bufHi.length; i += 4) {
+    if (bufHi[i] !== bufNoHi[i] || bufHi[i + 1] !== bufNoHi[i + 1] || bufHi[i + 2] !== bufNoHi[i + 2]) hiDiffCount++;
+  }
+  // Only thin 1px front-cap rim should be highlighted (not wide patches across the curved barrel)
+  assert.ok(hiDiffCount < 90, `L1: tilted arch_hollow highlight pixels should be limited to thin cap rim (got ${hiDiffCount})`);
+
+  // 5. L2: Stronger directional inter-block shadow check on tilted pole + pad
+  const ibDoc = new BuilderDocument(256, 256, 4, 4, 16);
+  ibDoc.groundShadow.enabled = true;
+  ibDoc.groundShadow.interBlockEnabled = true;
+  const pad = createDefaultShape('box', { u: 0.5, v: 0.5, zPx: 0, sizeU: 3, sizeV: 3, heightPx: 8, baseColor: { r: 200, g: 200, b: 200, a: 255 } });
+  const tiltedPole = createDefaultShape('cylinder', { u: 0.5, v: 1.5, zPx: 26, sizeU: 0.75, sizeV: 0.75, heightPx: 36, tiltUDeg: 75 });
+  ibDoc.layers.push(
+    new BuilderLayer(256, 256, 'Pad', 'shape', pad),
+    new BuilderLayer(256, 256, 'TiltedPole', 'shape', tiltedPole),
+  );
+  ibDoc.sortLayersByIsoDepth();
+  ibDoc.rerenderAllShapes();
+  const withIb = ibDoc.renderToBuffer();
+  ibDoc.groundShadow.interBlockEnabled = false;
+  const withoutIb = ibDoc.renderToBuffer();
+  let darkenedOnPad = 0;
+  for (let i = 0; i < withIb.length; i += 4) {
+    if (withoutIb[i + 3] === 255 && withIb[i] < withoutIb[i]) darkenedOnPad++;
+  }
+  assert.ok(darkenedOnPad >= 40, `L2: tilted overhanging cylinder must darken >= 40 sunlit pad pixels (got ${darkenedOnPad})`);
+
+  // 6. L3 & v1.5.1 English i18n zero-CJK check
+  const skillPath = path.resolve(process.env.USERPROFILE || 'C:\\Users\\akie', '.gemini/config/plugins/blender-meow/skills/blender-meow-architect/SKILL.md');
+  if (fs.existsSync(skillPath)) {
+    const skillText = fs.readFileSync(skillPath, 'utf8');
+    for (const kw of ['tiltUDeg', 'tiltVDeg', 'tiltPivot', 'sphere', 'flipZ']) {
+      assert.ok(skillText.includes(kw), `L3: SKILL.md must document ${kw}`);
+    }
+  }
+  try {
+    setLanguageSetting('en');
+    const v151Samples = [
+      '底面贴合 (基座不沉底)',
+      '🧲 倾斜时自动贴地（防止穿入地下）',
+      '已叠放至 Z = -9px',
+      '🧱 已叠放至 Z = -9px (-4.80m)',
+      '⬇ 已将倾斜底部贴齐地面 (Z = -9px)',
+    ];
+    for (const s of v151Samples) {
+      const out = tr(s);
+      assert.ok(!CJK_RE.test(out), `[v1.5.1 en i18n] CJK leaked: "${s}" -> "${out}"`);
+    }
+    assert.equal(tr('底面贴合 (基座不沉底)'), 'Base Flush (Never Sinks)');
+    assert.equal(tr('已叠放至 Z = -9px'), 'Stacked at Z = -9px');
+  } finally {
+    setLanguageSetting('zh');
+  }
+
+  console.log('PASS: Opus v1.5.0 review fixes (H1 tilted stacking, M1 flush bottom pivot, M2 keepGroundedOnTilt, M4 bottom texture preservation, L1 arch barrel smoothness, L2 shadow assertions, L3 docs & i18n)');
+}
+
+async function testResizeCurrentProjectCanvas() {
+  const CJK_RE = /[\u4e00-\u9fff]/;
+
+  // 1. App.resizeCanvas: resizes W/H/plotU/plotV/bottomMarginPx, syncs default base & plotFrame, preserves raster origin, supports undo/redo & no-op guard
+  const app = new App();
+  app.newDocument(256, 256, 4, 4, 'ResizeTest', true, true);
+  // Paint a distinctive pixel on a raster underlay at the original isometric origin
+  const orig0 = app.doc.getViewOrigin();
+  const rBuf = new Uint8ClampedArray(256 * 256 * 4);
+  const rx0 = Math.round(orig0.originX);
+  const ry0 = Math.round(orig0.originY);
+  const ri0 = (ry0 * 256 + rx0) * 4;
+  rBuf[ri0] = 255; rBuf[ri0 + 1] = 40; rBuf[ri0 + 2] = 120; rBuf[ri0 + 3] = 255;
+  const rLayer = new BuilderLayer(256, 256, 'RefMarker', 'raster', undefined, rBuf);
+  app.doc.layers.unshift(rLayer);
+
+  assert.equal(app.resizeCanvas(256, 256, 4, 4, 16), false, 'No-op resizeCanvas must return false');
+  assert.equal(app.history.canUndo, false, 'No-op resizeCanvas must not push history');
+
+  const changed = app.resizeCanvas(384, 512, 6, 6, 24, { syncBaseLayer: true });
+  assert.equal(changed, true, 'resizeCanvas must return true when dimensions change');
+  assert.equal(app.doc.width, 384);
+  assert.equal(app.doc.height, 512);
+  assert.equal(app.doc.plotU, 6);
+  assert.equal(app.doc.plotV, 6);
+  assert.equal(app.doc.bottomMarginPx, 24);
+  assert.equal(app.doc.plotFrame.sizeU, 6, 'Default plotFrame must expand to 6');
+  assert.equal(app.doc.plotFrame.sizeV, 6, 'Default plotFrame must expand to 6');
+
+  const baseL = app.doc.layers.find((l) => l.shape?.shapeType === 'theotown_base')!;
+  assert.equal(baseL.shape?.sizeU, 6, 'syncBaseLayer must expand default grass base sizeU to 6');
+  assert.equal(baseL.shape?.sizeV, 6, 'syncBaseLayer must expand default grass base sizeV to 6');
+
+  const orig1 = app.doc.getViewOrigin();
+  const rx1 = Math.round(orig1.originX);
+  const ry1 = Math.round(orig1.originY);
+  const ri1 = (ry1 * 384 + rx1) * 4;
+  assert.equal(rLayer.data[ri1], 255, 'Raster marker must track shifted isometric origin X/Y');
+  assert.equal(rLayer.data[ri1 + 3], 255, 'Raster marker alpha must survive canvas resize');
+
+  // Undo & Redo round-trip
+  assert.ok(app.undo(), 'Undo must revert resizeCanvas');
+  assert.equal(app.doc.width, 256);
+  assert.equal(app.doc.height, 256);
+  assert.equal(app.doc.plotU, 4);
+  assert.equal(app.doc.plotV, 4);
+  assert.equal(app.doc.bottomMarginPx, 16);
+  assert.equal(app.doc.layers.find((l) => l.shape?.shapeType === 'theotown_base')?.shape?.sizeU, 4);
+  const restoredRaster = app.doc.layers.find((l) => l.kind === 'raster')!;
+  assert.equal(restoredRaster.data[ri0], 255, 'Undo must restore original raster pixel coordinates');
+
+  assert.ok(app.redo(), 'Redo must reapply resizeCanvas');
+  assert.equal(app.doc.width, 384);
+  assert.equal(app.doc.height, 512);
+  assert.equal(app.doc.plotU, 6);
+  assert.equal(app.doc.plotV, 6);
+
+  // 2. computeRecommendedCanvasSize fits tall skyscraper cleanly across all 4 rotations
+  app.newDocument(128, 128, 2, 2, 'TallFit', true, true);
+  app.addShapeLayer(createDefaultShape('box', { u: 0.5, v: 0.5, zPx: 0, sizeU: 1, sizeV: 1, heightPx: 300 }));
+  const rec = app.doc.computeRecommendedCanvasSize();
+  assert.equal(rec.width % 16, 0, 'Recommended width must be a clean multiple of 16');
+  assert.equal(rec.height % 16, 0, 'Recommended height must be a clean multiple of 16');
+  assert.ok(rec.height >= 352, `Recommended height for 300px tower must be >= 352 (got ${rec.height})`);
+  app.resizeCanvas(rec.width, rec.height);
+  const b0 = app.doc.renderToBuffer();
+  assert.equal(countPixels(app.doc.layers[1].data).semiTransparent, 0, 'Resized auto-fit shape layer 0-AA');
+  assert.ok(countPixels(app.doc.layers[1].data).solid > 2000, 'Resized auto-fit shape layer renders tall tower');
+  for (let r = 1; r <= 4; r++) app.doc.rotateView(1);
+  assert.ok(buffersEqual(app.doc.renderToBuffer(), b0), 'Resized auto-fit canvas 4x90deg closure');
+
+  // 3. MCP resize_canvas bugfix: must preserve plotU/plotV instead of corrupting them with pixel dx/dy
+  const mcpCtx = { app, refreshAll: () => {}, fitView: () => {}, requestRender: () => {} };
+  app.newDocument(256, 256, 4, 4, 'McpResize', true, true);
+  await executeAiStudioCommand(mcpCtx, {
+    kind: 'doc_action',
+    action: 'resize_canvas',
+    width: 384,
+    height: 384,
+  });
+  assert.equal(app.doc.width, 384);
+  assert.equal(app.doc.height, 384);
+  assert.equal(app.doc.plotU, 4, 'MCP resize_canvas without plotU must preserve plotU=4');
+  assert.equal(app.doc.plotV, 4, 'MCP resize_canvas without plotV must preserve plotV=4');
+
+  // 4. English i18n zero-CJK check for all new Resize Canvas strings
+  try {
+    setLanguageSetting('en');
+    const resizeSamples = [
+      '点击修改当前项目画布尺寸与场地格数',
+      '📐 修改画布尺寸',
+      '📐 修改当前项目画布尺寸',
+      '🎯 适配当前模型',
+      '按当前所有可见 3D 图形在四个视角下的最大边界自动计算推荐画布尺寸',
+      '同步调整默认绿地底座尺寸',
+      '底部留白 (px)',
+      '✓ 应用尺寸',
+      '✅ 所有 3D 图层将按新尺寸无损重绘，参考底图自动对齐原点（支持 Ctrl+Z 撤回）。',
+      '画布尺寸未发生变化',
+      '调整画布尺寸为 384×512',
+      '当前画布：256×256 px · 场地 4×4 格',
+      '🎯 已填入推荐画布尺寸：384×512 px',
+      '📐 已调整画布尺寸为 384×512 (6×6格)',
+      '⚠️ 当前输入小于场地最小投影 (192×112 px)，边缘图形可能被裁切。',
+      '⚠️ 画布略小，建议至少 384×512 px 以完整容纳当前模型。',
+    ];
+    for (const s of resizeSamples) {
+      const out = tr(s);
+      assert.ok(!CJK_RE.test(out), `[resizeCanvas en i18n] CJK leaked: "${s}" -> "${out}"`);
+    }
+    assert.equal(tr('调整画布尺寸为 384×512'), 'Resize Canvas to 384×512');
+    assert.equal(tr('📐 已调整画布尺寸为 384×512 (6×6格)'), '📐 Canvas resized to 384×512 (6×6c)');
+  } finally {
+    setLanguageSetting('zh');
+  }
+
+  console.log('PASS: Resize current project canvas (App.resizeCanvas, base sync, raster origin align, undo/redo, auto-fit, MCP resize_canvas bugfix & i18n)');
+}
+
 async function main() {
   testRotationClosure();
   testTheoTownRuler();
@@ -5264,6 +5850,9 @@ async function main() {
   await testOpusV14xReviewFixes();
   testV145I18nAndBrandMetadata();
   await testV147Features();
+  await testV150VerticalTiltRotation();
+  await testOpusV150ReviewFixes();
+  await testResizeCurrentProjectCanvas();
   console.log('ALL CORE CHECKS PASSED');
 }
 

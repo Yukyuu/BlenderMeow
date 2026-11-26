@@ -101,6 +101,23 @@ export const EN_SHORTCUTS_CHANGELOG: Record<string, string> = {
   // Changelog entries
   '📜 版本更新日志': '📜 Release Changelog',
   '我知道了喵 ✨': 'Got it, Meow ✨',
+  '修改当前项目画布尺寸与倾斜旋转全链路审计修复':
+    'Resize Current Project Canvas & Tilt Rotation Audit Fixes',
+  '新增修改当前项目画布尺寸功能：点击左上角尺寸徽章（如 256×256 · 4×4格）、品牌菜单或项目主页即可随时调整画布像素宽高（32~2048px）、TheoTown 场地格数（1×1~24×24）与底部留白；内置「🎯 适配当前模型」四视角自动推荐尺寸、同步调整默认绿地底座、参考底图原点自动对齐与完整 Ctrl+Z 撤回重做。':
+    'Added Resize Current Project Canvas: click the top-left size pill, Brand Menu, or Project Home to adjust canvas pixel width/height (32–2048px), TheoTown plot cells (1×1–24×24), and bottom margin anytime; includes 4-view "Auto-Fit Model" sizing, default grass base sync, origin-aligned raster preservation & full Ctrl+Z undo/redo.',
+  '精准倾斜叠放与「底面贴合」支点升级：修复倾斜/放平形体在拖拽吸附、点击「🧱 叠放到顶面」或 AI 堆叠时因未补偿倾斜最低点偏移导致的悬浮或陷入问题；「底面贴合（基座不沉底）」支点现自动抬升补偿旋转最低点，确保任意倾角下形体最低点始终严丝合缝贴齐基准面且 4×90° 视角闭合一致。':
+    'Exact tilted stacking & Base Flush pivot: fixed floating/sinking when stacking tilted or laid-flat shapes via drag snap, Stack on Below, or AI ops; "Base Flush (Never Sinks)" pivot now automatically lifts the rotated solid so its lowest point sits strictly flush on zPx with exact 4×90° closure.',
+  '默认开启「🧲 倾斜时自动贴地」保护：在检查器倾斜区与设置中新增开关（默认开启），地面形体倾斜或一键放平时自动保持底部紧贴 Z = 0 不穿入地下，复位回 0° 时自动归位，同时支持倾斜状态下的负离地基准 Z 调节与一键「⬇ 底部贴地」。':
+    'Default-ON "Keep Grounded on Tilt" guard: added toggle in the tilt inspector and Settings so ground-resting shapes stay flush on Z = 0 when tilted or laid flat and return cleanly at 0°, with negative Z reference support and exact Snap Ground.',
+  '倾斜 3D 手柄、命中检测与底面贴图保护：选择工具的所有高度/升降/边长/控制面手柄现随倾斜 3D 线框实时联动，拖拽倾斜高度手柄沿真实倾斜轴向伸缩，点击倾斜体原空地基不再误触拖拽；滑动倾角经过 0° 或点击复位时自动保留已设置的底面 (-Z) 贴图；同步消除倾斜镂空拱形/曲面柱/多截面柱曲面的零星高光噪点。':
+    'Tilted 3D gizmos, hit-testing & texture protection: Select tool height/lift/edge/section handles follow the tilted 3D wireframe, height drags project along the tilted +Z axis, empty un-tilted base areas no longer hijack clicks, bottom (-Z) textures survive resetting tilt to 0°, and speckled highlight artifacts on tilted hollow arches/lofts/columns are eliminated.',
+  '竖直平面任意角度倾斜旋转与一键放平（Z 轴倾角）': 'Vertical-Plane Arbitrary Tilt Rotation & Lay Flat (Z-Axis Tilt)',
+  '全几何体竖直平面 3D 倾斜旋转：新增 U-Z 倾角与 V-Z 倾角调节（支持 -180° ~ +180° 任意角度倾斜、±90° 水平放平躺卧及双轴组合倾角），覆盖全部 11 种 3D 参数化形体（立方体、直角三棱柱、多棱柱、楔形屋顶、四棱锥、圆柱、圆锥、穹顶、球体/椭球体、实心/镂空拱形、曲面放样柱与多截面柱体），严格基于 TheoTown 物理比例（1 格 = 18px = 9.6m）做刚体正交旋转，不产生透视拉伸失真。':
+    'Arbitrary 3D vertical-plane tilt rotation across all 11 3D primitives (Box, Right Tri-Prism, Prism, Wedge, Pyramid, Cylinder, Cone, Dome, Sphere/Ellipsoid, Solid/Hollow Arch, Loft & Multi-Section Columns): adjust U-Z & V-Z tilt across -180° to +180° (±90° lays flat) using strict orthogonal rigid rotation in TheoTown metric scale (1 cell = 18px = 9.6m).',
+  '实时旋转支点与快捷操作：支持在「几何中心（默认）」与「底面中心（基座固定）」间切换倾斜支点；检查器内置「0° 复位 / U +45° / U +90° 放平 / V +90° 放平 / ⬇ 底部贴地」快捷按钮，选择工具顶部快捷条新增「📐 放平 90° / 复位倾角」一键切换。':
+    'Configurable tilt pivot ("Geometric Center" or "Base Center") plus quick presets (Reset 0°, U +45°, U/V +90° Flat, Snap Ground) in the inspector and a one-click Lay Flat 90° / Reset Tilt button in the Select tool bar.',
+  '全链路精确同步：倾斜与放平形体全面支持 0-AA 解析渲染、封闭底面与双端盖（含平面贴图与程序立面纹理随面旋转）、精确 TheoTown 1:1 地面阴影与实验性体块间投影、拓扑遮挡排序、倾斜 3D 线框 Gizmo、地面投影凸包轮廓、.bmeow 工程持久化及 4×90° 视角像素级闭合。':
+    'Full-pipeline accuracy for tilted shapes: 0-AA analytical & mesh rendering, closed bottom/end caps with rotated planar & procedural textures, exact TheoTown 1:1 ground & inter-block shadows, topological depth sorting, tilted 3D gizmo wireframes, convex-hull ground projection, .bmeow persistence & 4×90° pixel closure.',
   'v1.4.x 全面审查修复、四视角分层阴影与性能升级': 'v1.4.x Full Audit Fixes, 4-View Shadow Groups & Performance Upgrade',
   '核心状态与缓存修复：修复四视角导出/交接后画布滞留 270° 旧视角与结构阴影关闭再开后视口不显示的问题；「光影精细度」现随 .bmeow 工程与撤销栈持久化保存，跨设备导出结果一致。':
     'Core state & cache fixes: fixed stale 270° view layers after 4-view export/handoff and invisible cast shadows after toggling off & on; Shading Precision now persists per .bmeow project & undo history for deterministic cross-device exports.',

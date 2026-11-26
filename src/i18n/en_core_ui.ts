@@ -616,4 +616,52 @@ export const EN_CORE_UI: Record<string, string> = {
   '调整贴图不透明度': 'Adjust Texture Opacity',
   '🔍 打开大屏精细拼贴窗口 (支持撤回/恢复)': '🔍 Open Fullscreen Decal Composer (Undo/Redo)',
   '📦 纹理素材库（矩形 ⇄ 平行四边形斜切）': '📦 Texture Library (Rect ⇄ Parallelogram Shear)',
+
+  // v1.5.0 Vertical-plane 3D tilt rotation
+  '底面 (-Z)': 'Bottom (-Z)',
+  '三角底面 (-Z)': 'Tri Bottom (-Z)',
+  '竖直平面倾斜旋转（Z 轴倾角）': 'Vertical-Plane Tilt Rotation (Z-Axis Tilt)',
+  'U-Z 倾角 (°)': 'U-Z Tilt (°)',
+  'V-Z 倾角 (°)': 'V-Z Tilt (°)',
+  '调整 U-Z 倾斜角度': 'Adjust U-Z Tilt Angle',
+  '调整 V-Z 倾斜角度': 'Adjust V-Z Tilt Angle',
+  '复位倾斜角度': 'Reset Tilt Angles',
+  'U-Z 倾斜 45°': 'Tilt U-Z +45°',
+  '沿 U-Z 放平 90°': 'Lay Flat U-Z 90°',
+  '沿 V-Z 放平 90°': 'Lay Flat V-Z 90°',
+  '0° 复位': 'Reset 0°',
+  'U +90° 放平': 'U +90° Flat',
+  'V +90° 放平': 'V +90° Flat',
+  '自动调整离地高度 Z，使倾斜后形体的最低点刚好贴齐地面 (Z = 0)':
+    'Auto-adjust Z elevation so the lowest tilted point sits flush on the ground (Z = 0)',
+  '倾斜底部贴齐地面': 'Snap Tilted Bottom to Ground',
+  '⬇ 底部贴地': '⬇ Snap Ground',
+  '旋转支点': 'Tilt Pivot',
+  '几何中心 (默认)': 'Geometric Center (Default)',
+  '底面中心 (基座固定)': 'Base Center (Anchored)',
+  '底面贴合 (基座不沉底)': 'Base Flush (Never Sinks)',
+  '🧲 倾斜时自动贴地（防止穿入地下）': '🧲 Keep Grounded on Tilt (Prevent Sinking)',
+  '修改倾斜旋转支点': 'Change Tilt Pivot',
+  '可在 -180°~180° 内沿竖直平面任意倾斜或放平（±90° 即水平躺卧），旋转严格保持 TheoTown 物理比例。':
+    'Tilt or lay flat freely across -180° to 180° in vertical planes (±90° lays horizontal), strictly preserving TheoTown metric scale.',
+  '清除当前图形的竖直倾斜角度，恢复直立状态': 'Clear vertical tilt angles and restore upright orientation',
+  '将当前选中图形沿 U-Z 平面旋转 90° 水平放平': 'Rotate active shape 90° in the U-Z vertical plane to lay flat',
+  '📐 已清除倾角，恢复直立状态': '📐 Tilt angles cleared (upright restored)',
+  '📐 已将当前图形沿 U-Z 平面放平 90°': '📐 Laid shape flat 90° along U-Z plane',
+  '📐 复位倾角': '📐 Reset Tilt',
+  '📐 放平 90°': '📐 Lay Flat 90°',
+
+  // Resize current project canvas
+  '点击修改当前项目画布尺寸与场地格数': 'Click to resize current project canvas & plot grid',
+  '📐 修改画布尺寸': '📐 Resize Canvas',
+  '📐 修改当前项目画布尺寸': '📐 Resize Current Canvas',
+  '🎯 适配当前模型': '🎯 Auto-Fit Model',
+  '按当前所有可见 3D 图形在四个视角下的最大边界自动计算推荐画布尺寸':
+    'Auto-calculate recommended canvas size to fit all visible 3D shapes across all 4 views',
+  '同步调整默认绿地底座尺寸': 'Sync default grass base size with plot grid',
+  '底部留白 (px)': 'Bottom Margin (px)',
+  '✓ 应用尺寸': '✓ Apply Size',
+  '✅ 所有 3D 图层将按新尺寸无损重绘，参考底图自动对齐原点（支持 Ctrl+Z 撤回）。':
+    '✅ All 3D layers re-render losslessly; reference rasters stay aligned to origin (Ctrl+Z Undo supported).',
+  '画布尺寸未发生变化': 'Canvas size unchanged',
 };

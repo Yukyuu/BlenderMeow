@@ -30,6 +30,18 @@ export const EN_PATTERNS: PatternRule[] = [
 
   // AI Studio Ops history
   [/^AI 调整画布为 (\d+)×(\d+)$/, (_, w, h) => `AI Resize Canvas to ${w}×${h}`],
+  [/^调整画布尺寸为 (\d+)×(\d+)$/, (_, w, h) => `Resize Canvas to ${w}×${h}`],
+  [/^当前画布：(\d+)×(\d+) px · 场地 (\d+)×(\d+) 格$/, (_, w, h, u, v) => `Current: ${w}×${h} px · Plot ${u}×${v} cells`],
+  [/^🎯 已填入推荐画布尺寸：(\d+)×(\d+) px$/, (_, w, h) => `🎯 Filled recommended canvas size: ${w}×${h} px`],
+  [/^📐 已调整画布尺寸为 (\d+)×(\d+) \((\d+)×(\d+)格\)$/, (_, w, h, u, v) => `📐 Canvas resized to ${w}×${h} (${u}×${v}c)`],
+  [
+    /^⚠️ 当前输入小于场地最小投影 \((\d+)×(\d+) px\)，边缘图形可能被裁切。$/,
+    (_, w, h) => `⚠️ Smaller than minimum plot diamond (${w}×${h} px); outer shapes may be clipped.`,
+  ],
+  [
+    /^⚠️ 画布略小，建议至少 (\d+)×(\d+) px 以完整容纳当前模型。$/,
+    (_, w, h) => `⚠️ Canvas slightly tight — recommended at least ${w}×${h} px to fit all shapes.`,
+  ],
   [/^旋转视角至 (\d+)°$/, (_, deg) => `Rotate View to ${deg}°`],
   [/^修改图层属性「(.+)」$/, (_, name) => `Update Layer "${name}"`],
   [/^叠放「(.+)」到下方顶面$/, (_, name) => `Stack "${name}" on Below`],
@@ -69,8 +81,9 @@ export const EN_PATTERNS: PatternRule[] = [
   [/^无法加载贴图模板: (.+)$/, (_, url) => `Failed to load template: ${url}`],
   [/^编辑 (.+)$/, (_, name) => `Edit ${innerTr(name)}`],
   [
-    /^([\d.]+)×([\d.]+)格 \(([\d.]+)×([\d.]+)m\) · H (\d+)px \(([\d.]+)m\)$/,
-    (_, su, sv, mu, mv, h, hm) => `${su}×${sv}c (${mu}×${mv}m) · H ${h}px (${hm}m)`,
+    /^([\d.]+)×([\d.]+)格 \(([\d.]+)×([\d.]+)m\) · H (\d+)px \(([\d.]+)m\)(?: · 倾角 U:([\d.-]+)° V:([\d.-]+)°)?$/,
+    (_, su, sv, mu, mv, h, hm, tu, tv) =>
+      `${su}×${sv}c (${mu}×${mv}m) · H ${h}px (${hm}m)${tu !== undefined ? ` · Tilt U:${tu}° V:${tv}°` : ''}`,
   ],
   [/^底座 ([\d.]+)×([\d.]+)格 \(([\d.]+)×([\d.]+)m\)$/, (_, su, sv, mu, mv) => `Base ${su}×${sv}c (${mu}×${mv}m)`],
   [/^✨ 已生成「(.+)」\(([\d.]+)×([\d.]+)格 · H (\d+)px\)$/, (_, name, su, sv, h) => `✨ Created "${innerTr(name)}" (${su}×${sv}c · H ${h}px)`],
@@ -81,9 +94,10 @@ export const EN_PATTERNS: PatternRule[] = [
   ],
   [/^(.+) \(背面\)$/, (_, face) => `${innerTr(face)} (Back)`],
   [
-    /^地面投影 · U:([\d.-]+) V:([\d.-]+) · 离地 (\d+)px \(([\d.]+)m\)$/,
+    /^地面投影 · U:([\d.-]+) V:([\d.-]+) · 离地 (-?\d+)px \(([\d.-]+)m\)$/,
     (_, u, v, z, m) => `Ground Proj · U:${u} V:${v} · Z ${z}px (${m}m)`,
   ],
+  [/^⬇ 已将倾斜底部贴齐地面 \(Z = (-?\d+)px\)$/, (_, z) => `⬇ Snapped tilted bottom to ground (Z = ${z}px)`],
   [/^恢复默认网格线颜色 \((#[0-9A-F]{8})\)$/, (_, hex) => `Reset default grid line color (${hex})`],
   [/^已恢复默认网格线颜色 \((#[0-9A-F]{8})\)$/, (_, hex) => `Reset grid line color to default (${hex})`],
   [/^↺ 恢复默认网格色 \((#[0-9A-F]{8})\)$/, (_, hex) => `↺ Reset Grid Color (${hex})`],
@@ -104,8 +118,8 @@ export const EN_PATTERNS: PatternRule[] = [
     /^已选预设「(.+)」，在画布上拖拽放置或点右侧填参数$/,
     (_, shape) => `Selected "${innerTr(shape)}" — drag on canvas or enter params`,
   ],
-  [/^已叠放至 Z = (\d+)px$/, (_, z) => `Stacked at Z = ${z}px`],
-  [/^🧱 已叠放至 Z = (\d+)px \(([\d.]+)m\)$/, (_, z, m) => `🧱 Stacked at Z = ${z}px (${m}m)`],
+  [/^已叠放至 Z = (-?\d+)px$/, (_, z) => `Stacked at Z = ${z}px`],
+  [/^🧱 已叠放至 Z = (-?\d+)px \(([\d.-]+)m\)$/, (_, z, m) => `🧱 Stacked at Z = ${z}px (${m}m)`],
   [/^当前预设: (.+)$/, (_, shape) => `Preset: ${innerTr(shape)}`],
   [/^起点 \(([\d.-]+), ([\d.-]+)\) · ([\d.]+)×([\d.]+)格$/, (_, u, v, su, sv) => `Origin (${u}, ${v}) · ${su}×${sv}c`],
   [/^场地边框已复位为 ([\d.]+)×([\d.]+) 格$/, (_, u, v) => `Plot frame reset to ${u}×${v} cells`],

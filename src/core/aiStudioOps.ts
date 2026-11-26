@@ -49,12 +49,15 @@ import {
   SHAPE_LABELS,
   clampShadeContrast,
   cloneShape,
+  computeZPxForTargetMinZ,
   createDefaultShape,
   getPlanarFaceScreenOverlay,
+  normalizeTiltDeg,
   type FacadePatternType,
   type OutlineMode,
   type ParametricShape,
   type ShapeKind,
+  type TiltPivot,
   type TriPrismCut,
 } from './isoRenderer';
 import {
@@ -295,6 +298,9 @@ export function getStudioState(app: App) {
           worldFootprint: wf,
           ori: s.ori,
           flipZ: Boolean(s.flipZ),
+          tiltUDeg: normalizeTiltDeg(s.tiltUDeg),
+          tiltVDeg: normalizeTiltDeg(s.tiltVDeg),
+          tiltPivot: s.tiltPivot ?? 'center',
           prismSides: s.prismSides,
           triPrismCut: s.triPrismCut,
           wedgeMode: s.wedgeMode,
@@ -933,11 +939,21 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
       if (action === 'resize_canvas') {
         const newW = clamp(Math.round(Number(cmd.width) || app.doc.width), 32, 2048);
         const newH = clamp(Math.round(Number(cmd.height) || app.doc.height), 32, 2048);
-        const dx = typeof cmd.dx === 'number' ? Math.round(cmd.dx) : Math.floor((newW - app.doc.width) / 2);
-        const dy = typeof cmd.dy === 'number' ? Math.round(cmd.dy) : newH - app.doc.height;
+        const nextPlotU = typeof cmd.plotU === 'number' ? clamp(Math.round(cmd.plotU), 1, 24) : app.doc.plotU;
+        const nextPlotV = typeof cmd.plotV === 'number' ? clamp(Math.round(cmd.plotV), 1, 24) : app.doc.plotV;
+        const nextMargin = typeof cmd.bottomMarginPx === 'number'
+          ? clamp(Math.round(cmd.bottomMarginPx), 0, 256)
+          : app.doc.bottomMarginPx;
+        const rasterDx = typeof cmd.dx === 'number' ? Math.round(cmd.dx) : undefined;
+        const rasterDy = typeof cmd.dy === 'number' ? Math.round(cmd.dy) : undefined;
         app.pushHistory(`AI 调整画布为 ${newW}×${newH}`);
-        app.doc.resize(newW, newH, dx, dy);
-        app.doc.rerenderAllShapes();
+        app.doc.resize(newW, newH, nextPlotU, nextPlotV, nextMargin, {
+          rasterDx,
+          rasterDy,
+          syncBaseLayer: nextPlotU !== app.doc.plotU || nextPlotV !== app.doc.plotV,
+        });
+        app.emit('doc');
+        app.emit('layers');
         ctx.fitView();
         ctx.refreshAll();
         return getStudioState(app);
@@ -1247,7 +1263,7 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
         const wf = app.doc.getShapeWorldFootprint(layer.shape);
         const tz = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, layer.id);
         app.pushHistory(`叠放「${layer.name}」到下方顶面`);
-        layer.shape.zPx = tz;
+        layer.shape.zPx = computeZPxForTargetMinZ(layer.shape, tz);
         app.doc.rerenderShapeLayer(layer);
         if (app.settings.autoSortOnEdit) app.doc.sortLayersByIsoDepth();
         ctx.refreshAll();
@@ -1286,6 +1302,9 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
               heightPx: nextType === 'theotown_base' ? 0 : Math.max(4, targetLayer.shape.heightPx || (nextType === 'sphere' ? 18 : 24)),
               ori: targetLayer.shape.ori,
               flipZ: nextType === 'theotown_base' ? undefined : targetLayer.shape.flipZ,
+              tiltUDeg: nextType === 'theotown_base' ? undefined : targetLayer.shape.tiltUDeg,
+              tiltVDeg: nextType === 'theotown_base' ? undefined : targetLayer.shape.tiltVDeg,
+              tiltPivot: nextType === 'theotown_base' ? undefined : targetLayer.shape.tiltPivot,
               baseColor: { ...targetLayer.shape.baseColor },
               roofColor: targetLayer.shape.roofColor ? { ...targetLayer.shape.roofColor } : null,
               autoShade: targetLayer.shape.autoShade,
@@ -1309,12 +1328,26 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
       if (suVal !== undefined) shape.sizeU = clamp(suVal, 0.0625, 24);
       if (svVal !== undefined) shape.sizeV = clamp(svVal, 0.0625, 24);
       if (hVal !== undefined) shape.heightPx = nextType === 'theotown_base' ? 0 : clamp(Math.round(hVal), 1, 480);
-      if (zVal !== undefined) shape.zPx = clamp(Math.round(zVal), -128, 480);
+      if (zVal !== undefined) shape.zPx = clamp(Math.round(zVal), -512, 1024);
 
       if (typeof cmd.ori === 'number') shape.ori = normalizeRotation(cmd.ori);
       if (typeof cmd.flipZ === 'boolean') {
         if (cmd.flipZ && shape.shapeType !== 'theotown_base') shape.flipZ = true;
         else delete shape.flipZ;
+      }
+      if (typeof cmd.tiltUDeg === 'number') {
+        const tu = normalizeTiltDeg(cmd.tiltUDeg);
+        if (tu !== 0 && shape.shapeType !== 'theotown_base') shape.tiltUDeg = tu;
+        else delete shape.tiltUDeg;
+      }
+      if (typeof cmd.tiltVDeg === 'number') {
+        const tv = normalizeTiltDeg(cmd.tiltVDeg);
+        if (tv !== 0 && shape.shapeType !== 'theotown_base') shape.tiltVDeg = tv;
+        else delete shape.tiltVDeg;
+      }
+      if (cmd.tiltPivot === 'center' || cmd.tiltPivot === 'bottom') {
+        if (cmd.tiltPivot === 'bottom' && shape.shapeType !== 'theotown_base') shape.tiltPivot = 'bottom' as TiltPivot;
+        else delete shape.tiltPivot;
       }
       if (typeof cmd.prismSides === 'number') shape.prismSides = clamp(Math.round(cmd.prismSides), 3, 16);
       if (cmd.triPrismCut === 'vertical' || cmd.triPrismCut === 'slope') shape.triPrismCut = cmd.triPrismCut as TriPrismCut;
@@ -1423,7 +1456,8 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
       if (targetLayer) {
         if (cmd.stackOnBelow) {
           const wf = app.doc.getShapeWorldFootprint(shape);
-          shape.zPx = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, targetLayer.id);
+          const tz = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0, targetLayer.id);
+          shape.zPx = computeZPxForTargetMinZ(shape, tz);
         }
         app.pushHistory(`AI 更新 3D 图层「${targetLayer.name}」`);
         targetLayer.shape = cloneShape(shape);
@@ -1439,7 +1473,8 @@ export async function executeAiStudioCommand(ctx: AiStudioContext, cmd: Record<s
 
       if (cmd.stackOnBelow) {
         const wf = app.doc.getShapeWorldFootprint(shape);
-        shape.zPx = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0);
+        const tz = app.doc.getTopElevationAt(wf.u0, wf.v0, wf.u1 - wf.u0, wf.v1 - wf.v0);
+        shape.zPx = computeZPxForTargetMinZ(shape, tz);
       }
       const label = typeof cmd.name === 'string' && cmd.name.trim()
         ? cmd.name.trim()
